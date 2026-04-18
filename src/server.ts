@@ -5,6 +5,8 @@ import { loadConfig } from "./lib/config.js";
 import { logger } from "./lib/logger.js";
 import { AppError } from "./lib/errors.js";
 import { watiWebhookRoute } from "./wati/webhook.js";
+import { startExpiryJob } from "./consent/expiries.js";
+import { createWatiClient } from "./wati/client.js";
 
 async function buildServer() {
   const cfg = loadConfig();
@@ -47,6 +49,8 @@ async function buildServer() {
 
 async function main() {
   const { app, cfg } = await buildServer();
+  // Consent expiry job runs in-process every 15 min.
+  startExpiryJob(createWatiClient());
   try {
     await app.listen({ port: cfg.PORT, host: "0.0.0.0" });
   } catch (err) {

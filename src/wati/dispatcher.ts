@@ -15,9 +15,10 @@ import {
   markShownAction,
   recordShown,
   runMatching,
-  type CandidateCard,
 } from "../matching/pipeline.js";
 import { applyDelta, extractRefinement } from "../matching/refinement.js";
+import { onTargetAccept, onTargetDecline, propose } from "../consent/machine.js";
+import { getSql } from "../db/client.js";
 import type { WatiClient } from "./client.js";
 import type { WatiInbound } from "./types.js";
 
@@ -131,18 +132,56 @@ async function onRefine(ctx: Ctx) {
 }
 
 async function onAccept(ctx: Ctx) {
+  // If this founder is the TARGET of an awaiting_mutual request, their Accept
+  // completes the handshake. Otherwise, they're the REQUESTER accepting a card.
+  const sql = getSql();
+  const pending = await sql<Array<{ id: string }>>`
+    SELECT id FROM match_requests
+    WHERE target_id = ${ctx.founder.id} AND status = 'awaiting_mutual'
+    LIMIT 1
+  `;
+  if (pending[0]) {
+    await onTargetAccept({ targetId: ctx.founder.id, wati: ctx.deps.wati });
+    // onTargetAccept sends the intro to both sides — no extra reply needed.
+    return;
+  }
+
   const targetId = await getLastShownFounderId(ctx.conv.id);
   if (!targetId) {
     await send(ctx, "Nothing to accept yet — tell me who you're looking for first.", "ack");
     return;
   }
   await markShownAction(ctx.conv.id, targetId, "accepted");
-  await send(
-    ctx,
-    "Got it — I'll reach out to them on your behalf and ask if they'd like to connect. " +
-      "I'll ping you the moment they reply.\n\n_(Consent flow wires up in Phase 4.)_",
-    "accept",
-  );
+
+  const [shownRow] = await sql<Array<{ rationale: string }>>`
+    SELECT rationale FROM candidates_shown
+    WHERE conversation_id = ${ctx.conv.id} AND founder_id = ${targetId}
+    ORDER BY created_at DESC LIMIT 1
+  `;
+  const note = shownRow?.rationale ?? "potential cofounder fit";
+
+  try {
+    await propose({
+      requesterId: ctx.founder.id,
+      targetId,
+      requesterNote: note,
+      wati: ctx.deps.wati,
+    });
+    await send(
+      ctx,
+      "Nice — I've reached out to them. I'll ping you the moment they reply " +
+        "(or in 72h if they don't).",
+      "accept",
+    );
+  } catch (err) {
+    logger.error({ err }, "propose failed");
+    await send(
+      ctx,
+      "Hit a snag reaching out to them. I've logged it and will retry. " +
+        "Meanwhile — reply with what to refine or say \"next\".",
+      "accept-failed",
+    );
+  }
 }
 
 async function onSkip(ctx: Ctx) {
@@ -156,8 +195,24 @@ async function onSkip(ctx: Ctx) {
 }
 
 async function onDecline(ctx: Ctx) {
-  // Phase 4 will map this to ConsentSM.decline(). For now, just ack.
-  await send(ctx, "No problem — you're good. Thanks for letting me know.", "decline");
+  const result = await onTargetDecline({
+    targetId: ctx.founder.id,
+    wati: ctx.deps.wati,
+    requesterConversationResolver: async (requesterId) => {
+      const sql = getSql();
+      const rows = await sql<Array<{ id: string }>>`
+        SELECT id FROM conversations
+        WHERE founder_id = ${requesterId} AND status = 'active'
+        ORDER BY last_active_at DESC LIMIT 1
+      `;
+      return rows[0]?.id ?? null;
+    },
+  });
+  if (result.status === "declined") {
+    await send(ctx, "Thanks — no problem. We won't share anything further about you.", "decline");
+  } else {
+    await send(ctx, "Nothing pending for you to decline right now.", "decline");
+  }
 }
 
 async function runAndReply(
