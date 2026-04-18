@@ -1,5 +1,7 @@
-import type { Sql } from "postgres";
+import type { Sql, TransactionSql } from "postgres";
 import { getSql } from "../db/client.js";
+
+type SqlLike = Sql | TransactionSql;
 import { loadConfig } from "../lib/config.js";
 import { AppError } from "../lib/errors.js";
 import { getLLM } from "../llm/index.js";
@@ -34,7 +36,7 @@ interface MinimalFounder {
   summary: string;
 }
 
-async function loadFounder(id: string, sql: Sql): Promise<MinimalFounder> {
+async function loadFounder(id: string, sql: SqlLike): Promise<MinimalFounder> {
   const rows = await sql<Array<MinimalFounder>>`
     SELECT id, name, city, phone, headline, summary FROM founders WHERE id = ${id} LIMIT 1
   `;
@@ -43,8 +45,9 @@ async function loadFounder(id: string, sql: Sql): Promise<MinimalFounder> {
   return f;
 }
 
-async function logEvent(type: string, payload: Record<string, unknown>, sql: Sql) {
-  await sql`INSERT INTO events (type, payload) VALUES (${type}, ${sql.json(payload)})`;
+async function logEvent(type: string, payload: Record<string, unknown>, sql: SqlLike) {
+  // postgres.js JSONValue typing is strict; cast payload at the boundary.
+  await sql`INSERT INTO events (type, payload) VALUES (${type}, ${sql.json(payload as never)})`;
 }
 
 /**

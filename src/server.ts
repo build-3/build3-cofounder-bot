@@ -2,9 +2,9 @@ import Fastify from "fastify";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import { loadConfig } from "./lib/config.js";
-import { logger } from "./lib/logger.js";
 import { AppError } from "./lib/errors.js";
 import { watiWebhookRoute } from "./wati/webhook.js";
+import { adminRoutes } from "./admin/routes.js";
 import { startExpiryJob } from "./consent/expiries.js";
 import { createWatiClient } from "./wati/client.js";
 
@@ -12,7 +12,9 @@ async function buildServer() {
   const cfg = loadConfig();
 
   const app = Fastify({
-    logger,
+    // Fastify expects logger options or a boolean, not a pino instance; we use
+    // the module-level pino logger directly elsewhere. Level mirrors config.
+    logger: { level: cfg.LOG_LEVEL },
     trustProxy: true,
     disableRequestLogging: false,
     bodyLimit: 1_048_576, // 1 MB — WATI payloads are tiny
@@ -41,8 +43,7 @@ async function buildServer() {
   app.get("/healthz", async () => ({ ok: true, ts: new Date().toISOString() }));
 
   await app.register(watiWebhookRoute, { prefix: "/webhooks" });
-
-  // Phase 6+ will attach: app.register(adminRoutes, { prefix: "/admin" })
+  await app.register(adminRoutes, { prefix: "/admin" });
 
   return { app, cfg };
 }

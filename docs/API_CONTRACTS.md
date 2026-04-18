@@ -69,23 +69,29 @@ Only used to reopen a session outside the 24h window.
 All admin routes require `Authorization: Bearer $ADMIN_TOKEN`.
 
 ### `POST /admin/ingest`
-Triggers CSV → Postgres ingest.
+Triggers CSV → Postgres ingest. Idempotent: upserts on `phone`.
 
-Request: `{ "csvPath": "data/seed_founders.csv" }`
-Response: `{ "inserted": 120, "updated": 0, "skipped": 0 }`
+Request: `{ "csvPath": "data/seed_founders.csv" }` (body optional — defaults to that path)
+Response: `{ "ok": true, "csvPath": "data/seed_founders.csv", "inserted": 120, "updated": 0, "elapsedMs": 8421 }`
 
 ### `GET /admin/stats`
 Response:
 ```json
 {
-  "founders": 120,
-  "conversations": 42,
-  "candidates_shown": 310,
-  "accepts": 27,
-  "mutual_accepts": 11,
-  "intros_sent": 11,
-  "declined": 4,
-  "expired": 2
+  "ok": true,
+  "stats": {
+    "founders": 120,
+    "conversations": 42,
+    "turns_in": 311,
+    "turns_out": 402,
+    "candidates_shown": 310,
+    "accepts": 27,
+    "awaiting_mutual": 3,
+    "mutual_accepts": 0,
+    "intros_sent": 11,
+    "declined": 4,
+    "expired": 2
+  }
 }
 ```
 

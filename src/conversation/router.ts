@@ -9,7 +9,7 @@
 export type Intent = "accept" | "skip" | "decline" | "discover" | "refine" | "other" | "help";
 
 export interface RouterInput {
-  text?: string;
+  text?: string | undefined;
   buttonPayload?: string | undefined;
 }
 

@@ -9,14 +9,24 @@ const cfg = (() => {
   }
 })();
 
-export const logger = pino({
+const pinoOptions: pino.LoggerOptions = {
   level: cfg.LOG_LEVEL,
-  transport:
-    cfg.NODE_ENV === "development"
-      ? { target: "pino-pretty", options: { colorize: true, translateTime: "SYS:HH:MM:ss.l" } }
-      : undefined,
   redact: {
-    paths: ["req.headers.authorization", "req.headers['x-webhook-secret']", "*.OPENAI_API_KEY", "*.WATI_API_TOKEN"],
+    paths: [
+      "req.headers.authorization",
+      "req.headers['x-webhook-secret']",
+      "*.OPENAI_API_KEY",
+      "*.WATI_API_TOKEN",
+    ],
     censor: "[redacted]",
   },
-});
+};
+
+if (cfg.NODE_ENV === "development") {
+  pinoOptions.transport = {
+    target: "pino-pretty",
+    options: { colorize: true, translateTime: "SYS:HH:MM:ss.l" },
+  };
+}
+
+export const logger = pino(pinoOptions);
