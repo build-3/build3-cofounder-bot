@@ -4,6 +4,7 @@ import rateLimit from "@fastify/rate-limit";
 import { loadConfig } from "./lib/config.js";
 import { logger } from "./lib/logger.js";
 import { AppError } from "./lib/errors.js";
+import { watiWebhookRoute } from "./wati/webhook.js";
 
 async function buildServer() {
   const cfg = loadConfig();
@@ -37,9 +38,9 @@ async function buildServer() {
 
   app.get("/healthz", async () => ({ ok: true, ts: new Date().toISOString() }));
 
-  // Phase 2+ will attach:
-  //   app.register(watiWebhookRoute, { prefix: "/webhooks" })
-  //   app.register(adminRoutes,      { prefix: "/admin" })
+  await app.register(watiWebhookRoute, { prefix: "/webhooks" });
+
+  // Phase 6+ will attach: app.register(adminRoutes, { prefix: "/admin" })
 
   return { app, cfg };
 }
