@@ -29,24 +29,21 @@ _Rolling status log. Update this at the end of every meaningful step._
 
 ## What does not work yet
 
-- `/admin/stats` returns 500 — Supabase DB-auth blocker (see Blockers below).
 - No fake-WATI integration test (the unit suite exercises each seam; a full round-trip test is deferred).
+- Expiry job doesn't fire on Vercel serverless — `/admin/run-expiries` cron hook is the follow-up.
 
 ## Next steps
 
-1. **BLOCKER: Get working `DATABASE_URL`** (see Blockers #2 below). Once resolved:
-2. `npm run seed:load` against the new project to put the 120 synthetic founders in.
-3. Verify `/admin/stats` returns 200 (not 500).
-4. Copy Vercel host + webhook URL into WATI dashboard per `docs/DEPLOY.md` §3.
-5. Rotate the leaked Vercel token (exposed in CLI "next commands" output).
-6. Pilot with 3–5 founders; watch `/admin/stats`.
+1. Copy Vercel host + webhook URL into WATI dashboard per `docs/DEPLOY.md` §3.
+2. Rotate the leaked Vercel token (Blockers #6).
+3. Pilot with 3–5 founders; watch `/admin/stats`.
 
 ## Blockers / open questions
 
 | # | Item | Severity | Notes |
 |---|---|---|---|
 | 1 | OpenAI API key | ✅ resolved | In Keychain `build3-cofounder-bot/OPENAI_API_KEY` |
-| 2 | Supabase DB password (DATABASE_URL) | 🔴 **CRITICAL BLOCKER** | Project `vjzgptthyzzjtjcqpplq` created, schema applied, pgvector on. Password in Keychain (`aQdai9%g*T3&*hP9H`) is **wrong** — Supavisor rejects with `FATAL Tenant or user not found`. Reproduced locally with postgres-js on both pooler ports (5432 + 6543). Project ref + user format verified correct. **Action:** User must reset DB password from Supabase Dashboard → Settings → Database, or re-copy the exact transaction-pooler URI from Connect panel. Until then `/admin/stats` returns 500, and seed cannot run. |
+| 2 | Supabase DB password (DATABASE_URL) | ✅ resolved | Transaction-pooler URI updated with new password. `/admin/stats` → 200. 120 founders seeded. |
 | 3 | WATI API token + base URL | ✅ resolved | Tenant 453532 (Build3-owned per ADR-009); creds in Keychain |
 | 4 | Public hostname + deploy | ✅ resolved (pending #2) | Vercel deploy working: `/healthz` → 200 in 0.35s. Framework set to `null`, using `@vercel/node` handler (`api/index.ts`). Pino-pretty removed from serverless bundle. Host: `https://build3-cofounder-bot.vercel.app`. Ready to paste webhook URL into WATI once #2 resolved. |
 | 5 | GitHub remote URL | ✅ resolved | `build-3/build3-cofounder-bot` (private Build3 org), all commits pushed to `main`, authorship `Arjun Thekkedan <heyarjunthekkedan@gmail.com>` |
@@ -54,25 +51,14 @@ _Rolling status log. Update this at the end of every meaningful step._
 
 ## Handoff notes (read me if picking this up cold)
 
-**Status: Phase 6 (Deploy) — 99% done, ONE BLOCKER**
+**Status: Phase 6 (Deploy) — COMPLETE. Ready for pilot.**
 
-- **CRITICAL:** `/admin/stats` returns 500 because the Supabase DB password is wrong. User has the correct password; awaiting their input to reset or re-paste the pooler URI. See Blockers #2 above.
-- **Deploy working:** `/healthz` → 200 in 0.35s on Vercel. See docs/DEPLOY.md for the pivot path (Fastify preset → `@vercel/node` + `api/index.ts` + `framework: null`).
+- **Deploy working:** `/healthz` → 200. `/admin/stats` → 200 with 120 founders in DB.
+- **120 founders seeded** via `npm run seed:load` (2026-04-19). Embeddings generated with `text-embedding-3-small`.
+- **Next action:** Paste webhook URL into WATI dashboard — `POST https://build3-cofounder-bot.vercel.app/webhooks/wati` with header `X-Webhook-Secret: <value from Keychain>`. Then rotate Blockers #6.
 - Start in `CLAUDE.md` for the rules. This file (`PROJECT_STATE.md`) is the "what's happening right now" log.
-- The plan lives at `/Users/arjun/.claude/plans/role-you-are-claude-misty-pearl.md`.
 - Every phase ends with a conventional-commit. Look at `git log` for the audit trail.
 - Synthetic founder data is committed at `data/seed_founders.csv`. Real cohort data should never be committed — `.gitignore` blocks `data/real_*.csv` and `*.private.csv`.
-
-### For the next agent
-
-If the user provides a working DATABASE_URL (either new password or re-copied pooler URI):
-1. `security add-generic-password -U -a $USER -s "build3-cofounder-bot/DATABASE_URL" -w "<new-url>"`
-2. `./scripts/vercel-sync-env.sh` to push to Vercel
-3. `vercel deploy --prod` to redeploy
-4. Curl `https://build3-cofounder-bot.vercel.app/admin/stats` with `-H "Authorization: Bearer $ADMIN_TOKEN"` to confirm 200
-5. `source ./scripts/load-env-from-keychain.sh && npm run seed:load` to load 120 founders
-6. Paste webhook URL into WATI dashboard (see docs/DEPLOY.md §3)
-7. Rotate Vercel token (Blockers #6)
 
 ## Sample conversations (keep in sync with matcher behavior)
 

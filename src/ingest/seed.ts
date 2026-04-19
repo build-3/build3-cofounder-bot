@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { getSql } from "../db/client.js";
+import postgres from "postgres";
 import { getLLM } from "../llm/index.js";
+import { loadConfig } from "../lib/config.js";
 import { logger } from "../lib/logger.js";
 import { parseCsv } from "./csv.js";
 
@@ -49,7 +50,8 @@ export async function ingestCsv(csvPath: string): Promise<{ inserted: number; up
   const rows = parseCsv(raw);
   logger.info({ csvPath, rows: rows.length }, "parsed founders CSV");
 
-  const sql = getSql();
+  const cfg = loadConfig();
+  const sql = postgres(cfg.DATABASE_URL, { max: 1, prepare: false });
   const llm = getLLM();
 
   // Batch embeddings in chunks of 64 to avoid huge payloads.
@@ -89,7 +91,7 @@ export async function ingestCsv(csvPath: string): Promise<{ inserted: number; up
              role_tags, sector_tags, stage_tags, seniority, years_exp, raw_profile)
           VALUES (${r.phone}, ${r.name}, ${r.email}, ${r.city}, ${r.headline}, ${r.summary},
                   ${r.role_tags}, ${r.sector_tags}, ${r.stage_tags}, ${r.seniority}, ${r.years_exp},
-                  ${sql.json({ source: "csv" })})
+                  ${tx.json({ source: "csv" })})
           ON CONFLICT (phone) DO UPDATE SET
             name        = EXCLUDED.name,
             email       = EXCLUDED.email,
@@ -123,6 +125,7 @@ export async function ingestCsv(csvPath: string): Promise<{ inserted: number; up
     logger.info({ processed: Math.min(start + BATCH, rows.length), total: rows.length }, "batch done");
   }
 
+  await sql.end({ timeout: 5 });
   return { inserted, updated };
 }
 
