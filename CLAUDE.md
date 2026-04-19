@@ -30,7 +30,15 @@ npm run seed:load      # ingest CSV → Postgres + embeddings
 
 ## Environment
 
-All configuration lives in `.env`. See `.env.example` for the full, authoritative list. Never hardcode secrets. `src/lib/config.ts` parses with Zod at boot — a missing var is a hard startup failure.
+Secrets live in **macOS Keychain** for local dev (service prefix `build3-cofounder-bot/`) and in **Vercel env vars** for prod. A populated `.env` must never be committed or sit in this repo. See ADR-008 in `docs/DECISIONS.md`.
+
+Local workflow:
+```
+./scripts/setup-keychain.sh                # first-time — prompts for each secret
+source ./scripts/load-env-from-keychain.sh # every shell session
+```
+
+`.env.example` documents the contract. `src/lib/config.ts` parses env with Zod at boot — a missing var is a hard startup failure.
 
 ## Architecture at a glance
 

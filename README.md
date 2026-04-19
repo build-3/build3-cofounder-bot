@@ -15,13 +15,29 @@ TypeScript · Fastify · Drizzle · Supabase Postgres + pgvector · OpenAI · WA
 ```bash
 git clone <repo>
 cd build3-cofounder-bot
-cp .env.example .env         # fill in the secrets
 npm install
+
+# Secrets live in macOS Keychain, not in a committed .env. See ADR-008.
+# First time on a new machine:
+./scripts/setup-keychain.sh        # prompts for each missing secret
+
+# Every subsequent shell:
+source ./scripts/load-env-from-keychain.sh
 npm run db:migrate
-npm run seed:generate        # creates data/seed_founders.csv
-npm run seed:load            # ingests CSV → Postgres + embeddings
-npm run dev                  # http://localhost:3000
+npm run seed:generate              # creates data/seed_founders.csv
+npm run seed:load                  # ingests CSV → Postgres + embeddings
+npm run dev                        # http://localhost:3000
 ```
+
+### Where secrets come from
+
+| Environment | Source | Rotation |
+|---|---|---|
+| Local dev | macOS Keychain (`security` CLI) under service prefix `build3-cofounder-bot/` | `security delete-…` then `add-generic-password` |
+| Vercel preview/prod | Project → Settings → Environment Variables | Vercel dashboard; redeploy to pick up |
+| CI (future) | GitHub Actions secrets | GitHub repo settings |
+
+`.env.example` documents the contract but must never be populated and committed. `.gitignore` blocks `.env*` except `.env.example`.
 
 ## Where to look first
 

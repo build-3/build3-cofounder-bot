@@ -59,3 +59,20 @@ One entry per significant architectural choice. Format: **Decision → Why → A
 - **Alternatives considered**: Inline prompts (fast, but opaque); external prompt registry (overkill at this stage).
 - **Tradeoffs**: Slightly more ceremony per change. Small.
 - **Date**: 2026-04-19
+
+## ADR-008 — Secrets live in macOS Keychain locally and Vercel env vars in prod; never in .env files on disk
+
+- **Decision**: Local dev sources secrets from macOS Keychain (`security` CLI) via `scripts/load-env-from-keychain.sh`. CI/prod reads from Vercel project env vars. `.env.example` documents the contract; a populated `.env` is never created, committed, or shared.
+- **Why**: A prior audit of `~/Documents/the_drool_company/.env` found plaintext OpenAI + WATI + Supabase keys sitting in a directory Finder, Spotlight, and Time Machine all index. Keychain entries are encrypted at rest, unlocked per-user per-session, and leave no searchable trace. Vercel handles the prod equivalent and lets us rotate without redeploying.
+- **Alternatives considered**: Committed `.env.encrypted` + sops/age (extra tooling for a single-dev MVP); 1Password CLI (good, but adds a vendor + onboarding step); Doppler (another vendor). Keychain + Vercel needs zero extra infra.
+- **Tradeoffs**: Teammates have to re-add secrets on first setup (documented in README). Acceptable — the cohort is one engineer right now.
+- **Related action**: Also migrated `~/Documents/the_drool_company/.env` to the same Keychain service and left a backup at `.env.backup-pre-keychain` (chmod 600, gitignored) so nothing breaks for that project.
+- **Date**: 2026-04-19
+
+## ADR-009 — WATI workspace is Build3-owned (not drool_company)
+
+- **Decision**: Reuse the existing WATI API credentials found in `the_drool_company/.env`; they are already provisioned under tenant `453532` with admin identity `tech@build3.org` (decoded from the JWT). The Build3 cofounder bot will send as Build3.
+- **Why**: A flag in the initial audit called out a possible tenant mismatch. Decoding the JWT shows the token is issued to `tech@build3.org` under Build3's tenant, so the concern was unfounded. Documenting here so the next person doesn't re-raise it.
+- **Alternatives considered**: Provisioning a new WATI workspace dedicated to the cofounder bot (slower, extra cost, no upside since the existing tenant is already Build3's).
+- **Tradeoffs**: One WATI tenant serves multiple Build3 use cases; template/number contention is possible if other Build3 bots share it. Mitigation: reserve distinct template names (`cofounder_*`) and the shared secret is distinct per webhook.
+- **Date**: 2026-04-19
