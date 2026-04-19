@@ -39,16 +39,14 @@ export const watiWebhookRoute: FastifyPluginAsync = async (app: FastifyInstance)
       });
     }
 
-    // Ack fast. Dispatch async; failures are logged but don't leak a 500 to WATI
-    // (which would trigger a retry and risk double-delivery if idempotency ever missed).
+    // Dispatch inline — Vercel terminates the function as soon as the handler
+    // returns, so queueMicrotask / fire-and-forget never runs on serverless.
+    // Idempotency is still enforced at the DB level.
+    try {
+      await dispatchInbound(parsed.data, { wati });
+    } catch (err) {
+      app.log.error({ err, watiMessageId: parsed.data.id }, "dispatchInbound failed");
+    }
     reply.code(200).send({ ok: true });
-
-    queueMicrotask(async () => {
-      try {
-        await dispatchInbound(parsed.data, { wati });
-      } catch (err) {
-        app.log.error({ err, watiMessageId: parsed.data.id }, "dispatchInbound failed");
-      }
-    });
   });
 };
