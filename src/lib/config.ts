@@ -22,6 +22,11 @@ const schema = z.object({
 
   ADMIN_TOKEN: z.string().min(8),
   CONSENT_EXPIRY_HOURS: z.coerce.number().int().positive().default(72),
+
+  // Safety rails — see src/wati/rate-limit.ts
+  KILL_SWITCH: z.coerce.boolean().default(false),
+  OUTBOUND_MAX_PER_WINDOW: z.coerce.number().int().positive().default(3),
+  OUTBOUND_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
 });
 
 export type AppConfig = z.infer<typeof schema>;

@@ -7,7 +7,12 @@ import {
   insertOutboundTurn,
   writeSearchState,
 } from "../conversation/store.js";
-import { classifyIntent, type Intent } from "../conversation/router.js";
+import {
+  classifyIntent,
+  composeReply,
+  getRecentTurns,
+  type VoiceIntent,
+} from "../conversation/voice.js";
 import {
   formatCardText,
   getLastShownFounderId,
@@ -19,20 +24,21 @@ import {
 import { applyDelta, extractRefinement } from "../matching/refinement.js";
 import { onTargetAccept, onTargetDecline, propose } from "../consent/machine.js";
 import { getSql } from "../db/client.js";
+import { loadConfig } from "../lib/config.js";
 import type { WatiClient } from "./client.js";
 import type { WatiInbound } from "./types.js";
 
 /**
- * InboundDispatcher. Responsibilities, in order:
- *  1. Identity gate (phone → founder).
- *  2. Idempotent inbound turn insertion (short-circuit on duplicate).
- *  3. Intent dispatch:
- *     - help          → onboarding message
- *     - discover      → (re)set search state, run matcher, send top card
- *     - refine        → extract delta, merge, run matcher, send top card
- *     - accept        → Phase 4 will trigger consent SM; Phase 3 acks
- *     - skip          → mark skipped, add anti-pref, show next candidate
- *     - decline       → Phase 4 wires into SM; Phase 3 acks
+ * InboundDispatcher.
+ *
+ * Contract:
+ *  - Exactly ONE outbound reply per inbound. The structured candidate card
+ *    counts as that one reply. This combined with DB idempotency on
+ *    wati_message_id is what prevents the kind of 50-message flood that
+ *    triggered the kill switch.
+ *  - All non-structured replies go through composeReply → LLM voice.
+ *  - Intent classification uses the LLM so "actually I want technical"
+ *    and "what's the weather" route correctly.
  */
 
 export interface DispatchDeps {
@@ -40,29 +46,58 @@ export interface DispatchDeps {
 }
 
 export async function dispatchInbound(msg: WatiInbound, deps: DispatchDeps): Promise<void> {
+  const cfg = loadConfig();
+  if (cfg.KILL_SWITCH) {
+    logger.warn({ waId: msg.waId, id: msg.id }, "KILL_SWITCH active — dispatcher is a no-op");
+    return;
+  }
+
   const founder = await findFounderByPhone(msg.waId);
+
   if (!founder) {
-    logger.info({ waId: msg.waId }, "non-cohort inbound — sending polite reply");
-    await deps.wati.sendText({
-      waId: msg.waId,
-      text:
-        "Hi! This is the Build3 Cofounder Bot — it's only for founders in the Build3 cohort. " +
-        "If you think you should have access, please ping the Build3 team.",
+    logger.info({ waId: msg.waId }, "non-cohort inbound");
+    const reply = await composeReply({
+      situation: "non_cohort",
+      founderFirstName: "",
+      recentTurns: [],
+      userTurn: msg.text ?? "",
     });
+    await deps.wati.sendText({ waId: msg.waId, text: reply });
     return;
   }
 
   if (!founder.optedIn) {
-    await deps.wati.sendText({
-      waId: msg.waId,
-      text: "You're currently opted out of the cofounder bot. Reply OPTIN to turn it back on.",
+    const reply = await composeReply({
+      situation: "opted_out",
+      founderFirstName: firstName(founder),
+      recentTurns: [],
+      userTurn: msg.text ?? "",
     });
+    await deps.wati.sendText({ waId: founder.phone, text: reply });
     return;
   }
 
   const conv = await getOrCreateConversation(founder.id);
-  const intent = classifyIntent({ text: msg.text, buttonPayload: msg.buttonPayload });
+  const state = await getSearchState(conv.id);
+  const recent = await getRecentTurns(conv.id);
+  const searchActive = Boolean(
+    state.role ||
+      state.sector.length ||
+      state.stage.length ||
+      state.location.length ||
+      state.seniority ||
+      state.mustHave.length,
+  );
 
+  const { intent, confidence } = await classifyIntent({
+    text: msg.text,
+    buttonPayload: msg.buttonPayload,
+    searchActive,
+    recentTurns: recent,
+  });
+
+  // Insert inbound BEFORE any side-effects so re-delivery is a no-op even if
+  // the downstream LLM work throws.
   const inserted = await insertInboundTurn({
     conversationId: conv.id,
     watiMessageId: msg.id,
@@ -74,56 +109,80 @@ export async function dispatchInbound(msg: WatiInbound, deps: DispatchDeps): Pro
     return;
   }
 
-  const ctx = { conv, founder, intent, deps, userTurn: msg.text ?? "" };
-  switch (intent) {
-    case "help":
-      return onHello(ctx);
-    case "discover":
-      return onDiscover(ctx);
-    case "refine":
-      return onRefine(ctx);
-    case "accept":
-      return onAccept(ctx);
-    case "skip":
-      return onSkip(ctx);
-    case "decline":
-      return onDecline(ctx);
-    case "other":
-    default:
-      return onRefine(ctx); // treat stray messages as refinement turns
+  const ctx: Ctx = {
+    conv,
+    founder,
+    intent,
+    confidence,
+    deps,
+    userTurn: msg.text ?? "",
+    recent,
+  };
+
+  try {
+    await route(ctx);
+  } catch (err) {
+    logger.error({ err, intent, convId: conv.id }, "dispatch failed — sending generic recovery");
+    const reply = await composeReply({
+      situation: "error_generic",
+      founderFirstName: firstName(founder),
+      recentTurns: recent,
+      userTurn: msg.text ?? "",
+    });
+    await sendText(ctx, reply, "error");
   }
 }
 
 interface Ctx {
   conv: { id: string; founderId: string };
   founder: Founder;
-  intent: Intent;
+  intent: VoiceIntent;
+  confidence: number;
   deps: DispatchDeps;
   userTurn: string;
+  recent: Array<{ direction: "in" | "out"; text: string }>;
 }
 
-async function onHello(ctx: Ctx) {
-  const text =
-    `Hey ${ctx.founder.name.split(" ")[0] ?? "there"} 👋 — I'm the Build3 Cofounder Bot.\n\n` +
-    `Tell me in your own words what you're looking for. Examples:\n` +
-    `  • "Find me a sales cofounder in fintech"\n` +
-    `  • "I want a technical cofounder, B2B, seed stage"\n` +
-    `  • "Growth operator in D2C, Bangalore"\n\n` +
-    `Refine naturally as we go. Tap *Accept* to connect, *Skip* to see someone else.`;
-  await send(ctx, text, "help");
+async function route(ctx: Ctx): Promise<void> {
+  // Low-confidence natural-language turns → ask ONE clarifying question
+  // instead of guessing.
+  if (ctx.confidence < 0.6 && ctx.intent === "other") {
+    return onClarify(ctx);
+  }
+
+  switch (ctx.intent) {
+    case "greeting":  return onGreeting(ctx);
+    case "discover":  return onDiscover(ctx);
+    case "refine":    return onRefine(ctx);
+    case "accept":    return onAccept(ctx);
+    case "skip":      return onSkip(ctx);
+    case "decline":   return onDecline(ctx);
+    case "stop":      return onStop(ctx);
+    case "off_topic": return onOffTopic(ctx);
+    case "other":
+    default:          return onClarify(ctx);
+  }
 }
 
-async function onDiscover(ctx: Ctx) {
-  await send(ctx, "Looking for good matches — one sec ⏳", "ack");
+async function onGreeting(ctx: Ctx): Promise<void> {
+  const text = await composeReply({
+    situation: "greeting",
+    founderFirstName: firstName(ctx.founder),
+    recentTurns: ctx.recent,
+    userTurn: ctx.userTurn,
+  });
+  await sendText(ctx, text, "greeting");
+}
+
+async function onDiscover(ctx: Ctx): Promise<void> {
   const state = await getSearchState(ctx.conv.id);
-  // A discover turn may also carry refinement (e.g. "find me a sales cofounder in fintech")
   const delta = await extractRefinement(state, ctx.userTurn);
   const nextState = applyDelta(state, delta);
   await writeSearchState(nextState);
   await runAndReply(ctx, nextState);
 }
 
-async function onRefine(ctx: Ctx) {
+async function onRefine(ctx: Ctx): Promise<void> {
   const state = await getSearchState(ctx.conv.id);
   const delta = await extractRefinement(state, ctx.userTurn);
   const nextState = applyDelta(state, delta);
@@ -131,9 +190,7 @@ async function onRefine(ctx: Ctx) {
   await runAndReply(ctx, nextState);
 }
 
-async function onAccept(ctx: Ctx) {
-  // If this founder is the TARGET of an awaiting_mutual request, their Accept
-  // completes the handshake. Otherwise, they're the REQUESTER accepting a card.
+async function onAccept(ctx: Ctx): Promise<void> {
   const sql = getSql();
   const pending = await sql<Array<{ id: string }>>`
     SELECT id FROM match_requests
@@ -141,14 +198,21 @@ async function onAccept(ctx: Ctx) {
     LIMIT 1
   `;
   if (pending[0]) {
+    // Target Accept completes the handshake; onTargetAccept owns the single
+    // outbound (the mutual intro to both sides).
     await onTargetAccept({ targetId: ctx.founder.id, wati: ctx.deps.wati });
-    // onTargetAccept sends the intro to both sides — no extra reply needed.
     return;
   }
 
   const targetId = await getLastShownFounderId(ctx.conv.id);
   if (!targetId) {
-    await send(ctx, "Nothing to accept yet — tell me who you're looking for first.", "ack");
+    const text = await composeReply({
+      situation: "nothing_to_accept",
+      founderFirstName: firstName(ctx.founder),
+      recentTurns: ctx.recent,
+      userTurn: ctx.userTurn,
+    });
+    await sendText(ctx, text, "nothing-to-accept");
     return;
   }
   await markShownAction(ctx.conv.id, targetId, "accepted");
@@ -167,34 +231,34 @@ async function onAccept(ctx: Ctx) {
       requesterNote: note,
       wati: ctx.deps.wati,
     });
-    await send(
-      ctx,
-      "Nice — I've reached out to them. I'll ping you the moment they reply " +
-        "(or in 72h if they don't).",
-      "accept",
-    );
+    const text = await composeReply({
+      situation: "accept_confirm",
+      founderFirstName: firstName(ctx.founder),
+      recentTurns: ctx.recent,
+      userTurn: ctx.userTurn,
+    });
+    await sendText(ctx, text, "accept");
   } catch (err) {
     logger.error({ err }, "propose failed");
-    await send(
-      ctx,
-      "Hit a snag reaching out to them. I've logged it and will retry. " +
-        "Meanwhile — reply with what to refine or say \"next\".",
-      "accept-failed",
-    );
+    const text = await composeReply({
+      situation: "error_generic",
+      founderFirstName: firstName(ctx.founder),
+      recentTurns: ctx.recent,
+      userTurn: ctx.userTurn,
+    });
+    await sendText(ctx, text, "accept-failed");
   }
 }
 
-async function onSkip(ctx: Ctx) {
+async function onSkip(ctx: Ctx): Promise<void> {
   const targetId = await getLastShownFounderId(ctx.conv.id);
   if (targetId) await markShownAction(ctx.conv.id, targetId, "skipped");
-
-  // Weak negative signal: append targeted anti-pref tokens if any stand out.
   const state = await getSearchState(ctx.conv.id);
-  await writeSearchState({ ...state, antiPrefs: [...state.antiPrefs].slice(-20) }); // cap to last 20
-  await runAndReply(ctx, state, { ackFirst: "Got it — let me find someone else." });
+  await writeSearchState({ ...state, antiPrefs: [...state.antiPrefs].slice(-20) });
+  await runAndReply(ctx, state);
 }
 
-async function onDecline(ctx: Ctx) {
+async function onDecline(ctx: Ctx): Promise<void> {
   const result = await onTargetDecline({
     targetId: ctx.founder.id,
     wati: ctx.deps.wati,
@@ -208,20 +272,57 @@ async function onDecline(ctx: Ctx) {
       return rows[0]?.id ?? null;
     },
   });
-  if (result.status === "declined") {
-    await send(ctx, "Thanks — no problem. We won't share anything further about you.", "decline");
-  } else {
-    await send(ctx, "Nothing pending for you to decline right now.", "decline");
+  if (result.status !== "declined") {
+    const text = await composeReply({
+      situation: "nothing_to_accept",
+      founderFirstName: firstName(ctx.founder),
+      recentTurns: ctx.recent,
+      userTurn: ctx.userTurn,
+    });
+    await sendText(ctx, text, "decline-noop");
   }
+  // When result.status === "declined", onTargetDecline has already sent the
+  // soft notice to the requester. Our own reply to the decliner is implicit
+  // (no message needed — they tapped a button).
+}
+
+async function onStop(ctx: Ctx): Promise<void> {
+  const text = await composeReply({
+    situation: "stop_ack",
+    founderFirstName: firstName(ctx.founder),
+    recentTurns: ctx.recent,
+    userTurn: ctx.userTurn,
+  });
+  await sendText(ctx, text, "stop");
+  // Best-effort: pause the conversation so we don't accidentally re-engage.
+  const sql = getSql();
+  await sql`UPDATE conversations SET status = 'paused' WHERE id = ${ctx.conv.id}`;
+}
+
+async function onOffTopic(ctx: Ctx): Promise<void> {
+  const text = await composeReply({
+    situation: "off_topic",
+    founderFirstName: firstName(ctx.founder),
+    recentTurns: ctx.recent,
+    userTurn: ctx.userTurn,
+  });
+  await sendText(ctx, text, "off-topic");
+}
+
+async function onClarify(ctx: Ctx): Promise<void> {
+  const text = await composeReply({
+    situation: "clarify",
+    founderFirstName: firstName(ctx.founder),
+    recentTurns: ctx.recent,
+    userTurn: ctx.userTurn,
+  });
+  await sendText(ctx, text, "clarify");
 }
 
 async function runAndReply(
   ctx: Ctx,
   state: Awaited<ReturnType<typeof getSearchState>>,
-  opts: { ackFirst?: string } = {},
-) {
-  if (opts.ackFirst) await send(ctx, opts.ackFirst, "ack");
-
+): Promise<void> {
   const shown = await getShownFounderIds(ctx.conv.id);
   const { cards } = await runMatching({
     requesterId: ctx.founder.id,
@@ -231,26 +332,31 @@ async function runAndReply(
   });
 
   if (cards.length === 0) {
-    await send(
-      ctx,
-      "Drawing a blank on that one — try giving me a role (technical/sales/growth/product) " +
-        "and a sector or location to narrow things down.",
-      "no-matches",
-    );
+    const text = await composeReply({
+      situation: "no_matches",
+      founderFirstName: firstName(ctx.founder),
+      recentTurns: ctx.recent,
+      userTurn: ctx.userTurn,
+    });
+    await sendText(ctx, text, "no-matches");
     return;
   }
 
-  await recordShown(ctx.conv.id, [cards[0]!]); // show one at a time; 2–3 held for skips
-  const text = formatCardText(cards[0]!, 0, 1);
+  await recordShown(ctx.conv.id, [cards[0]!]);
+  const body = formatCardText(cards[0]!, 0, 1);
   await ctx.deps.wati.sendButtons({
     waId: ctx.founder.phone,
-    body: text,
+    body,
     buttons: [{ text: "Accept" }, { text: "Skip" }],
   });
-  await insertOutboundTurn({ conversationId: ctx.conv.id, text, intent: "candidate" });
+  await insertOutboundTurn({ conversationId: ctx.conv.id, text: body, intent: "candidate" });
 }
 
-async function send(ctx: Ctx, text: string, intent: string) {
+async function sendText(ctx: Ctx, text: string, intent: string): Promise<void> {
   await ctx.deps.wati.sendText({ waId: ctx.founder.phone, text });
   await insertOutboundTurn({ conversationId: ctx.conv.id, text, intent });
+}
+
+function firstName(f: Founder): string {
+  return f.name.split(" ")[0] ?? "";
 }
