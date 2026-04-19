@@ -10,7 +10,6 @@
 
 import Fastify, { type FastifyInstance } from "fastify";
 import helmet from "@fastify/helmet";
-import rateLimit from "@fastify/rate-limit";
 import { loadConfig } from "./lib/config.js";
 import { AppError } from "./lib/errors.js";
 import { watiWebhookRoute } from "./wati/webhook.js";
@@ -26,12 +25,10 @@ const app: FastifyInstance = Fastify({
 });
 
 // Queue plugin registration — Fastify drains this in app.ready().
+// Rate-limiting intentionally lives at the Vercel edge (or a future
+// middleware) rather than in-process: @fastify/rate-limit's in-memory store
+// holds state per-isolate, which is meaningless on a scale-to-zero runtime.
 app.register(helmet, { contentSecurityPolicy: false });
-app.register(rateLimit, {
-  max: 300,
-  timeWindow: "1 minute",
-  allowList: (req) => req.url.startsWith("/webhooks/"),
-});
 
 app.setErrorHandler((err, _req, reply) => {
   if (err instanceof AppError) {
