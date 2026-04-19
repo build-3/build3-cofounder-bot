@@ -1,19 +1,18 @@
-import Fastify from "fastify";
+import Fastify, { type FastifyInstance } from "fastify";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import { loadConfig } from "./lib/config.js";
 import { AppError } from "./lib/errors.js";
 import { watiWebhookRoute } from "./wati/webhook.js";
 import { adminRoutes } from "./admin/routes.js";
-import { startExpiryJob } from "./consent/expiries.js";
-import { createWatiClient } from "./wati/client.js";
 
-async function buildServer() {
+// buildServer is pure construction. No app.listen, no side-effect timers —
+// those live in src/local.ts (local dev) and src/index.ts (Vercel entry)
+// respectively, so tests and serverless builds don't pull them in.
+export async function buildServer(): Promise<{ app: FastifyInstance; cfg: ReturnType<typeof loadConfig> }> {
   const cfg = loadConfig();
 
   const app = Fastify({
-    // Fastify expects logger options or a boolean, not a pino instance; we use
-    // the module-level pino logger directly elsewhere. Level mirrors config.
     logger: { level: cfg.LOG_LEVEL },
     trustProxy: true,
     disableRequestLogging: false,
@@ -47,22 +46,3 @@ async function buildServer() {
 
   return { app, cfg };
 }
-
-async function main() {
-  const { app, cfg } = await buildServer();
-  // Consent expiry job runs in-process every 15 min.
-  startExpiryJob(createWatiClient());
-  try {
-    await app.listen({ port: cfg.PORT, host: "0.0.0.0" });
-  } catch (err) {
-    app.log.error({ err }, "failed to start server");
-    process.exit(1);
-  }
-}
-
-// Only start when invoked directly (not during tests / imports)
-if (import.meta.url === `file://${process.argv[1]}`) {
-  void main();
-}
-
-export { buildServer };
