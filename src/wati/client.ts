@@ -42,16 +42,19 @@ async function withRetry(fn: () => Promise<Response>, label: string): Promise<Re
 
 export function createWatiClient(): WatiClient {
   const cfg = loadConfig();
+  const token = cfg.WATI_API_TOKEN.startsWith("Bearer ")
+    ? cfg.WATI_API_TOKEN
+    : `Bearer ${cfg.WATI_API_TOKEN}`;
   const headers = {
-    Authorization: `Bearer ${cfg.WATI_API_TOKEN}`,
+    Authorization: token,
     "Content-Type": "application/json",
   };
 
   return {
     async sendText({ waId, text }) {
-      const url = `${cfg.WATI_API_BASE_URL}/api/v1/sendSessionMessage/${encodeURIComponent(waId)}`;
+      const url = `${cfg.WATI_API_BASE_URL}/api/v1/sendSessionMessage/${encodeURIComponent(waId)}?messageText=${encodeURIComponent(text)}`;
       await withRetry(
-        () => fetch(url, { method: "POST", headers, body: JSON.stringify({ messageText: text }) }),
+        () => fetch(url, { method: "POST", headers }),
         "WATI.sendText",
       );
     },

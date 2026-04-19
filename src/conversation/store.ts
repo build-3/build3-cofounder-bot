@@ -60,7 +60,7 @@ export async function insertInboundTurn(args: {
   const result = await sql<Array<{ id: string }>>`
     INSERT INTO turns (conversation_id, direction, wati_message_id, text, intent)
     VALUES (${args.conversationId}, 'in', ${args.watiMessageId}, ${args.text}, ${args.intent ?? null})
-    ON CONFLICT (wati_message_id) DO NOTHING
+    ON CONFLICT (wati_message_id) WHERE wati_message_id IS NOT NULL DO NOTHING
     RETURNING id
   `;
   return result.length > 0;
