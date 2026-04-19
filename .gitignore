@@ -11,3 +11,4 @@ coverage/
 # Synthetic seed lives in data/ and IS committed; real founder exports do not.
 data/real_*.csv
 data/*.private.csv
+.vercel

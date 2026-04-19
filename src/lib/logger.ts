@@ -22,11 +22,11 @@ const pinoOptions: pino.LoggerOptions = {
   },
 };
 
-if (cfg.NODE_ENV === "development") {
-  pinoOptions.transport = {
-    target: "pino-pretty",
-    options: { colorize: true, translateTime: "SYS:HH:MM:ss.l" },
-  };
-}
+// Pretty-printing is intentionally *not* wired here. On serverless runtimes
+// (Vercel/Lambda), `pino-pretty`'s worker-thread transport can't resolve its
+// own module path and crashes at module init (`unable to determine transport
+// target`). We keep pino bare here and let the local-dev entrypoint pipe
+// stdout through `pino-pretty` via a CLI (e.g. `npm run dev | pino-pretty`)
+// if human-readable logs are needed locally.
 
 export const logger = pino(pinoOptions);
