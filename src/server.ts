@@ -7,7 +7,7 @@ import { watiWebhookRoute } from "./wati/webhook.js";
 import { adminRoutes } from "./admin/routes.js";
 
 // buildServer is pure construction. No app.listen, no side-effect timers —
-// those live in src/local.ts (local dev) and src/index.ts (Vercel entry)
+// those live in src/local.ts (local dev) and api/index.ts (Vercel handler)
 // respectively, so tests and serverless builds don't pull them in.
 export async function buildServer(): Promise<{ app: FastifyInstance; cfg: ReturnType<typeof loadConfig> }> {
   const cfg = loadConfig();
