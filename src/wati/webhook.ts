@@ -19,7 +19,9 @@ export const watiWebhookRoute: FastifyPluginAsync = async (app: FastifyInstance)
   const wati = createWatiClient();
 
   app.post("/wati", async (req, reply) => {
-    const secret = req.headers["x-webhook-secret"];
+    const headerSecret = req.headers["x-webhook-secret"];
+    const querySecret = (req.query as Record<string, string>).secret;
+    const secret = headerSecret ?? querySecret;
     if (typeof secret !== "string" || secret !== cfg.WATI_WEBHOOK_SECRET) {
       throw new UnauthorizedError("bad webhook secret");
     }
