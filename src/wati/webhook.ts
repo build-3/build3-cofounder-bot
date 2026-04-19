@@ -26,8 +26,11 @@ export const watiWebhookRoute: FastifyPluginAsync = async (app: FastifyInstance)
       throw new UnauthorizedError("bad webhook secret");
     }
 
+    app.log.info({ body: req.body }, "wati raw payload");
+
     const parsed = WatiInboundSchema.safeParse(req.body);
     if (!parsed.success) {
+      app.log.warn({ body: req.body, issues: parsed.error.issues }, "wati payload validation failed");
       throw new ValidationError("invalid WATI payload", {
         issues: parsed.error.issues.map((i) => ({
           path: i.path.join("."),
