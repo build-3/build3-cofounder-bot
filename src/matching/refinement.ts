@@ -5,7 +5,7 @@ import {
   buildRefinementUserPrompt,
   REFINEMENT_SYSTEM,
   type RefinementPromptInput,
-} from "../llm/prompts/refinement_v1.js";
+} from "../llm/prompts/refinement_v2.js";
 import type { SearchStateRow } from "../conversation/store.js";
 
 const PartialAddSchema = z.object({

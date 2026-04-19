@@ -14,6 +14,7 @@ export interface RetrievedCandidate {
   sector_tags: string[];
   stage_tags: string[];
   seniority: string;
+  years_exp: number;
   distance: number; // cosine distance (lower = closer)
 }
 
@@ -55,10 +56,11 @@ export async function retrieve(
   const rows = await sql<Array<{
     id: string; name: string; city: string; headline: string; summary: string;
     role_tags: string[]; sector_tags: string[]; stage_tags: string[]; seniority: string;
+    years_exp: number;
     distance: number;
   }>>`
     SELECT f.id, f.name, f.city, f.headline, f.summary,
-           f.role_tags, f.sector_tags, f.stage_tags, f.seniority,
+           f.role_tags, f.sector_tags, f.stage_tags, f.seniority, f.years_exp,
            (e.embedding <=> ${toPgVectorLiteral(vector)}::vector) AS distance
     FROM founder_embeddings e
     JOIN founders f ON f.id = e.founder_id
@@ -78,6 +80,7 @@ export async function retrieve(
     sector_tags: r.sector_tags,
     stage_tags: r.stage_tags,
     seniority: r.seniority,
+    years_exp: r.years_exp,
     distance: r.distance,
   }));
 }
