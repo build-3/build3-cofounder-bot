@@ -48,9 +48,14 @@ npm run dev                        # http://localhost:3000
 - `docs/API_CONTRACTS.md` — inbound + outbound payloads
 - `docs/DECISIONS.md` — ADR log
 
-## Deploy (once Phase 6 hits)
+## Deploy
 
-Deploy target is TBD (Railway / Render / Fly). After deploy, in the WATI dashboard:
+Target is **Vercel** (Node runtime, single function via `api/index.ts`). DB is a
+dedicated Supabase project (`vjzgptthyzzjtjcqpplq`, `ap-southeast-1`).
+Full step-by-step runbook — including the one-time `DATABASE_URL` pull, env-var
+mapping, and rollback — lives in [`docs/DEPLOY.md`](docs/DEPLOY.md).
+
+Once the Vercel host is live, in the WATI dashboard:
 
 ```
 Webhook URL:  POST https://<your-host>/webhooks/wati
