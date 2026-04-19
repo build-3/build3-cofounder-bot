@@ -8,6 +8,7 @@ _Rolling status log. Update this at the end of every meaningful step._
 
 ## Last changed
 
+- 2026-04-19 — Supabase project `build3-cofounder-bot` provisioned (ref `vjzgptthyzzjtjcqpplq`, region `ap-southeast-1`). Extensions `vector` and `pgcrypto` enabled. Migration `0001_init` applied; 9 tables created, 0 rows, RLS disabled (MVP; server is the only caller). Project URL + anon JWT + publishable key + project ref stashed in macOS Keychain under `build3-cofounder-bot/SUPABASE_*`. `DATABASE_URL` is the one remaining secret — needs manual pull from Supabase Dashboard (MCP doesn't expose the DB password). Full deploy runbook now at `docs/DEPLOY.md`.
 - 2026-04-19 — Secret hardening (ADR-008): migrated all plaintext secrets from `~/Documents/the_drool_company/.env` into macOS Keychain under service prefix `build3-cofounder-bot/`. Added `scripts/load-env-from-keychain.sh` (load into shell or `--print` for piping) and `scripts/setup-keychain.sh` (idempotent first-time prompts, `--force` overwrite). Rewrote drool `.env` to be a pointer-only file; backup at `.env.backup-pre-keychain` (chmod 600, gitignored). Tightened lovesosa `.gitignore` to block `.env*` except `.env.example`. `.env.example` now documents the Keychain contract with `__keychain:build3-cofounder-bot/<KEY>` sentinels. Also generated + stored a 39-char random `ADMIN_TOKEN`. WATI tenant flag resolved: JWT decodes to `tech@build3.org` / tenant `453532`, so the existing credentials are already Build3-owned (ADR-009).
 - 2026-04-19 — Phase 6: admin routes (`src/admin/routes.ts`) with bearer-token auth (`ADMIN_TOKEN`) — `POST /admin/ingest` lazily imports the CSV ingester; `GET /admin/stats` returns counts over founders / conversations / turns / candidates_shown / match_requests-by-status. Registered under `/admin` in `src/server.ts`. Sample transcripts added below.
 - 2026-04-19 — Phase 5: vitest + v8 coverage config; unit suites for `classifyIntent`, `normalizePhone`, `applyDelta` + `keywordDelta`, `assembleQuery` + `DEFAULT_WEIGHTS`, `fallbackIntro` privacy invariants, and `insertInboundTurn` idempotency contract via an injected fake sql client.
@@ -32,19 +33,20 @@ _Rolling status log. Update this at the end of every meaningful step._
 
 ## Next steps
 
-1. Run `npm install` + `npm run typecheck` + `npm run test` on a machine with deps installed.
-2. Apply migration 0001 to Supabase (or local Postgres + pgvector). Run `npm run seed:load`.
-3. Pick a host, deploy, paste the webhook URL into WATI per CLAUDE.md, pilot with 3–5 founders.
+1. Pull `DATABASE_URL` from the Supabase dashboard once and stash in Keychain (see `docs/DEPLOY.md` §1).
+2. `npm run seed:load` against the new project to put the 120 synthetic founders in.
+3. `vercel link` + `vercel deploy --prod`; copy the host into WATI dashboard per `docs/DEPLOY.md` §3.
+4. Pilot with 3–5 founders; watch `/admin/stats`.
 
 ## Blockers / open questions
 
 | # | Item | Severity | Notes |
 |---|---|---|---|
-| 1 | OpenAI API key | blocks any real LLM call | `.env` placeholder in use |
-| 2 | Supabase DB URL + pgvector enabled | blocks Phase 1 deploy-to-dev | can develop locally with Postgres+vector ext |
-| 3 | WATI API token + base URL | blocks outbound send | can mock for unit/integration tests |
-| 4 | Public hostname for webhook | blocks live smoke | not needed until Phase 6 |
-| 5 | GitHub remote URL | blocks `git push` | local commits continue meanwhile |
+| 1 | OpenAI API key | ✅ resolved | In Keychain `build3-cofounder-bot/OPENAI_API_KEY` |
+| 2 | Supabase DB URL + pgvector enabled | ⚠ partial | Project `vjzgptthyzzjtjcqpplq` created, schema applied, pgvector on. `DATABASE_URL` (pooler URI incl. password) still needs manual pull from Dashboard per `docs/DEPLOY.md` §1 |
+| 3 | WATI API token + base URL | ✅ resolved | Tenant 453532 (Build3-owned per ADR-009); creds in Keychain |
+| 4 | Public hostname for webhook | blocks live smoke | Vercel deploy is next — will produce a `*.vercel.app` host |
+| 5 | GitHub remote URL | blocks `git push` | Creating via `gh` CLI next |
 
 ## Handoff notes (read me if picking this up cold)
 
