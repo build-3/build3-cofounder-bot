@@ -18,35 +18,11 @@ export const watiWebhookRoute: FastifyPluginAsync = async (app: FastifyInstance)
   const cfg = loadConfig();
   const wati = createWatiClient();
 
-  app.post("/wati", async (req, reply) => {
-    const headerSecret = req.headers["x-webhook-secret"];
-    const querySecret = (req.query as Record<string, string>).secret;
-    const secret = headerSecret ?? querySecret;
-    if (typeof secret !== "string" || secret !== cfg.WATI_WEBHOOK_SECRET) {
-      throw new UnauthorizedError("bad webhook secret");
-    }
-
-    app.log.info({ body: req.body }, "wati raw payload");
-
-    const parsed = WatiInboundSchema.safeParse(req.body);
-    if (!parsed.success) {
-      app.log.warn({ body: req.body, issues: parsed.error.issues }, "wati payload validation failed");
-      throw new ValidationError("invalid WATI payload", {
-        issues: parsed.error.issues.map((i) => ({
-          path: i.path.join("."),
-          message: i.message,
-        })),
-      });
-    }
-
-    // Dispatch inline — Vercel terminates the function as soon as the handler
-    // returns, so queueMicrotask / fire-and-forget never runs on serverless.
-    // Idempotency is still enforced at the DB level.
-    try {
-      await dispatchInbound(parsed.data, { wati });
-    } catch (err) {
-      app.log.error({ err, watiMessageId: parsed.data.id }, "dispatchInbound failed");
-    }
-    reply.code(200).send({ ok: true });
+  app.post("/wati", async (_req, reply) => {
+    // KILL SWITCH: webhook disabled. Ack WATI so it stops retrying, but
+    // do not dispatch anything. Remove this block to re-enable.
+    reply.code(200).send({ ok: true, disabled: true });
   });
+  void cfg; void wati; void WatiInboundSchema; void dispatchInbound;
+  void UnauthorizedError; void ValidationError;
 };
