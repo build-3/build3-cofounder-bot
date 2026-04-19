@@ -63,14 +63,16 @@ export function createWatiClient(): WatiClient {
       if (buttons.length === 0 || buttons.length > 3) {
         throw new Error(`WATI allows 1–3 interactive buttons; got ${buttons.length}`);
       }
-      const url = `${cfg.WATI_API_BASE_URL}/api/v2/sendInteractiveButtonsMessage?whatsappNumber=${encodeURIComponent(waId)}`;
+      const url = `${cfg.WATI_API_BASE_URL}/api/v1/sendInteractiveButtonsMessage?whatsappNumber=${encodeURIComponent(waId)}`;
       await withRetry(
         () =>
           fetch(url, {
             method: "POST",
             headers,
             body: JSON.stringify({
+              header: { type: "Text", text: "Match" },
               body,
+              footer: "",
               buttons: buttons.map((b) => ({ text: b.text })),
             }),
           }),
