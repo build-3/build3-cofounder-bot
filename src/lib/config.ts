@@ -8,12 +8,16 @@ const schema = z.object({
 
   DATABASE_URL: z.string().min(1),
 
-  OPENAI_API_KEY: z.string().min(1),
+  OPENAI_API_KEY: z.string().min(1).optional(),
   OPENAI_MODEL_RERANK: z.string().default("gpt-4.1"),
   OPENAI_MODEL_CHAT: z.string().default("gpt-4.1"),
   OPENAI_MODEL_EMBED: z.string().default("text-embedding-3-small"),
 
-  LLM_PROVIDER: z.enum(["openai", "gemini"]).default("openai"),
+  GOOGLE_AI_KEY: z.string().min(1).optional(),
+  GEMINI_MODEL_CHAT: z.string().default("gemini-2.5-flash"),
+  GEMINI_MODEL_EMBED: z.string().default("gemini-embedding-001"),
+
+  LLM_PROVIDER: z.enum(["openai", "gemini"]).default("gemini"),
 
   WATI_API_BASE_URL: z.string().url(),
   WATI_API_TOKEN: z.string().min(1),
@@ -27,6 +31,21 @@ const schema = z.object({
   KILL_SWITCH: z.coerce.boolean().default(false),
   OUTBOUND_MAX_PER_WINDOW: z.coerce.number().int().positive().default(3),
   OUTBOUND_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
+}).superRefine((value, ctx) => {
+  if (value.LLM_PROVIDER === "openai" && !value.OPENAI_API_KEY) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["OPENAI_API_KEY"],
+      message: "required when LLM_PROVIDER=openai",
+    });
+  }
+  if (value.LLM_PROVIDER === "gemini" && !value.GOOGLE_AI_KEY) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["GOOGLE_AI_KEY"],
+      message: "required when LLM_PROVIDER=gemini",
+    });
+  }
 });
 
 export type AppConfig = z.infer<typeof schema>;

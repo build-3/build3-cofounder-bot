@@ -254,8 +254,26 @@ async function onSkip(ctx: Ctx): Promise<void> {
   const targetId = await getLastShownFounderId(ctx.conv.id);
   if (targetId) await markShownAction(ctx.conv.id, targetId, "skipped");
   const state = await getSearchState(ctx.conv.id);
-  await writeSearchState({ ...state, antiPrefs: [...state.antiPrefs].slice(-20) });
-  await runAndReply(ctx, state);
+  const sql = getSql();
+
+  const antiSignals: string[] = [];
+  if (targetId) {
+    const [skipped] = await sql<Array<{ headline: string; sector_tags: string[] }>>`
+      SELECT headline, sector_tags
+      FROM founders
+      WHERE id = ${targetId}
+      LIMIT 1
+    `;
+    if (skipped?.headline) antiSignals.push(skipped.headline.toLowerCase());
+    if (skipped?.sector_tags?.[0]) antiSignals.push(skipped.sector_tags[0].toLowerCase());
+  }
+
+  const nextState = {
+    ...state,
+    antiPrefs: [...state.antiPrefs, ...antiSignals].slice(-20),
+  };
+  await writeSearchState(nextState);
+  await runAndReply(ctx, nextState);
 }
 
 async function onDecline(ctx: Ctx): Promise<void> {

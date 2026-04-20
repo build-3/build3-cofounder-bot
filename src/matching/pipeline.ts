@@ -111,7 +111,9 @@ export async function markShownAction(
 }
 
 export function formatCardText(card: CandidateCard, index: number, total: number): string {
-  const header = total > 1 ? `Match ${index + 1} of ${total}\n\n` : "";
+  const header = total > 1
+    ? `Closest fit right now (${index + 1}/${total})\n\n`
+    : "Closest fit right now\n\n";
 
   // Meta line: seniority · years · top stage · top 2 sectors.
   // Kept short so the card stays scannable on a phone.
@@ -127,7 +129,7 @@ export function formatCardText(card: CandidateCard, index: number, total: number
     `${header}*${card.name}* — ${card.city}\n` +
     `${card.headline}\n` +
     `${metaLine}\n` +
-    `_Why:_ ${card.rationale}\n\n` +
+    `_Why this could work:_ ${card.rationale}\n\n` +
     `Reply *Accept* to connect, *Skip* to see the next.`
   );
 }

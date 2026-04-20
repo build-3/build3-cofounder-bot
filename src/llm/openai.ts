@@ -1,13 +1,13 @@
 import OpenAI from "openai";
 import { loadConfig } from "../lib/config.js";
 import { logger } from "../lib/logger.js";
-import type { JsonCallOptions, LLMMessage, LLMProvider } from "./provider.js";
+import type { EmbedOptions, JsonCallOptions, LLMMessage, LLMProvider } from "./provider.js";
 
 let _client: OpenAI | null = null;
 function client() {
   if (_client) return _client;
   const cfg = loadConfig();
-  _client = new OpenAI({ apiKey: cfg.OPENAI_API_KEY });
+  _client = new OpenAI({ apiKey: cfg.OPENAI_API_KEY! });
   return _client;
 }
 
@@ -51,7 +51,7 @@ export const openaiProvider: LLMProvider = {
     throw lastErr instanceof Error ? lastErr : new Error(`LLM JSON parse failed for ${schemaName}`);
   },
 
-  async embed(inputs) {
+  async embed(inputs, _opts?: EmbedOptions) {
     const cfg = loadConfig();
     if (inputs.length === 0) return [];
     const res = await client().embeddings.create({

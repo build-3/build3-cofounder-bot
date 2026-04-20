@@ -75,7 +75,7 @@ export async function ingestCsv(csvPath: string): Promise<{ inserted: number; up
     }));
 
     const embedInputs = batch.map((r) => composeEmbedText(r));
-    const vectors = await llm.embed(embedInputs);
+    const vectors = await llm.embed(embedInputs, { taskType: "RETRIEVAL_DOCUMENT" });
     if (vectors.length !== batch.length) {
       throw new Error(`embed returned ${vectors.length} vectors for ${batch.length} inputs`);
     }

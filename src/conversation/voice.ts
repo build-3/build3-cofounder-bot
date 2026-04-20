@@ -7,7 +7,7 @@ import {
   VOICE_SYSTEM,
   type Situation,
   type VoiceContext,
-} from "../llm/prompts/voice_v1.js";
+} from "../llm/prompts/voice_v2.js";
 import { logger } from "../lib/logger.js";
 import { getSql } from "../db/client.js";
 import type { Sql } from "postgres";
@@ -84,9 +84,15 @@ export async function classifyIntent(input: {
 
 function heuristicIntent(text: string, searchActive: boolean): { intent: VoiceIntent; confidence: number } {
   if (/^\s*(hi|hello|hey|start|help)\s*$/i.test(text)) return { intent: "greeting", confidence: 0.7 };
+  if (/\b(next|another one|someone else|show me someone else|pass)\b/i.test(text)) {
+    return { intent: "skip", confidence: 0.85 };
+  }
   if (/\b(stop|unsubscribe|leave me alone|quit|don'?t message)\b/i.test(text)) return { intent: "stop", confidence: 0.8 };
+  if (/\b(find|looking for|need|want|match me|get me)\b/i.test(text)) {
+    return { intent: "discover", confidence: 0.7 };
+  }
   if (/\b(cofounder|co-?founder|partner|technical|sales|growth|product)\b/i.test(text)) {
-    return { intent: searchActive ? "refine" : "discover", confidence: 0.6 };
+    return { intent: searchActive ? "refine" : "discover", confidence: 0.65 };
   }
   return { intent: "other", confidence: 0.3 };
 }

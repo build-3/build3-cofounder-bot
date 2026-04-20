@@ -8,7 +8,7 @@ A WhatsApp-native conversational cofounder-discovery bot for the Build3 internal
 
 ## Stack
 
-TypeScript · Fastify · Drizzle · Supabase Postgres + pgvector · OpenAI · WATI.
+TypeScript · Fastify · Drizzle · Supabase Postgres + pgvector · Gemini/OpenAI · WATI.
 
 ## Quick start
 

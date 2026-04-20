@@ -5,7 +5,7 @@ import {
   buildRerankUserPrompt,
   RERANK_SYSTEM,
   type RerankCandidate,
-} from "../llm/prompts/rerank_v1.js";
+} from "../llm/prompts/rerank_v2.js";
 import type { SearchStateRow } from "../conversation/store.js";
 import type { RetrievedCandidate } from "./retriever.js";
 
@@ -18,9 +18,9 @@ const RerankOutputSchema = z.object({
       breakdown: z
         .object({
           role_fit: z.number(),
+          reciprocal_fit: z.number(),
           sector_fit: z.number(),
           stage_fit: z.number(),
-          trajectory: z.number(),
           location_fit: z.number(),
           anti_pref: z.number(),
         })
@@ -39,26 +39,75 @@ export interface RankedCandidate {
 const TOP_N_TO_RERANK = 15;
 const RETURN_TOP = 3;
 
+function normalize(text: string): string {
+  return text.toLowerCase();
+}
+
+function reciprocalBoost(candidate: RetrievedCandidate, state: SearchStateRow, userTurn: string): number {
+  const text = normalize(`${candidate.headline} ${candidate.summary}`);
+  const founderSide = normalize(`${userTurn} ${state.mustHave.join(" ")}`);
+
+  if (/want a strong gtm \/ non-tech partner|marketing|growth|sales|gtm|non-tech/.test(founderSide)) {
+    if (/looking for a non-tech cofounder|gtm-strong cofounder|sales and customer development/.test(text)) return 3;
+  }
+  if (/want a strong technical partner|need tech|need technical|engineering skills|technical cofounder/.test(founderSide)) {
+    if (/looking for a technical cofounder|founder-level engineer|deeply technical cofounder/.test(text)) return 3;
+  }
+  if (/product-minded operating partner|product-minded/.test(founderSide)) {
+    if (/product|customer development|discovery/.test(text)) return 2;
+  }
+  return 0;
+}
+
+function heuristicScore(candidate: RetrievedCandidate, state: SearchStateRow, userTurn: string): number {
+  const roleFit = state.role && candidate.role_tags.includes(state.role) ? 3 : 0;
+  const sectorFit = state.sector.length === 0
+    ? 2
+    : candidate.sector_tags.some((tag) => state.sector.includes(tag)) ? 3 : 0;
+  const stageFit = state.stage.length === 0
+    ? 2
+    : candidate.stage_tags.some((tag) => state.stage.includes(tag)) ? 2 : 0;
+  const locationFit = state.location.length === 0
+    ? 2
+    : state.location.some((location) => location.toLowerCase() === candidate.city.toLowerCase()) ? 3 : 0;
+  const reciprocalFit = reciprocalBoost(candidate, state, userTurn);
+  const antiPrefPenalty = state.antiPrefs.some((antiPref) => normalize(`${candidate.headline} ${candidate.summary}`).includes(normalize(antiPref))) ? 2 : 0;
+  const exactSectorPenalty = state.sector.length > 0 && sectorFit === 0 ? 2 : 0;
+
+  return roleFit + reciprocalFit + sectorFit + stageFit + locationFit - antiPrefPenalty - exactSectorPenalty;
+}
+
+function humanRationale(candidate: RetrievedCandidate, state: SearchStateRow, userTurn: string): string {
+  const bits: string[] = [];
+  if (state.sector.length && candidate.sector_tags.some((tag) => state.sector.includes(tag))) {
+    bits.push(`${candidate.sector_tags[0]} overlap`);
+  }
+  if (reciprocalBoost(candidate, state, userTurn) > 0) {
+    bits.push("wants the kind of counterpart you described");
+  }
+  if (state.location.length && state.location.some((location) => location.toLowerCase() === candidate.city.toLowerCase())) {
+    bits.push(`based in ${candidate.city}`);
+  }
+  if (bits.length === 0 && state.role && candidate.role_tags.includes(state.role)) {
+    bits.push(`${state.role} role fit`);
+  }
+  return bits.join(", ").slice(0, 140) || "closest fit on role, trajectory, and overall cofounder complement";
+}
+
 function cheapFallbackRank(
   candidates: RetrievedCandidate[],
   state: SearchStateRow,
+  userTurn: string,
 ): RankedCandidate[] {
   // Deterministic fallback when LLM rerank fails or is skipped.
-  return candidates.slice(0, RETURN_TOP).map((c) => {
-    const sectorMatch = c.sector_tags.some((t) => state.sector.includes(t));
-    const roleMatch = state.role ? c.role_tags.includes(state.role) : false;
-    const locMatch = state.location.length === 0 ? true : state.location.some((l) => l.toLowerCase() === c.city.toLowerCase());
-    const bits = [
-      roleMatch ? `${state.role} background` : c.role_tags[0] ?? "cofounder profile",
-      sectorMatch ? `works in ${c.sector_tags.join("/")}` : null,
-      locMatch && state.location.length ? `based in ${c.city}` : null,
-    ].filter(Boolean);
-    return {
-      founder_id: c.founder_id,
-      score: -c.distance,
-      rationale: bits.join("; ").slice(0, 140) || "retrieval match on profile similarity",
-    };
-  });
+  return [...candidates]
+    .sort((a, b) => heuristicScore(b, state, userTurn) - heuristicScore(a, state, userTurn))
+    .slice(0, RETURN_TOP)
+    .map((candidate) => ({
+      founder_id: candidate.founder_id,
+      score: heuristicScore(candidate, state, userTurn),
+      rationale: humanRationale(candidate, state, userTurn),
+    }));
 }
 
 export async function rerank(
@@ -112,6 +161,6 @@ export async function rerank(
     }));
   } catch (err) {
     logger.warn({ err }, "rerank fell back to retrieval order");
-    return cheapFallbackRank(head, state);
+    return cheapFallbackRank(head, state, userTurn);
   }
 }

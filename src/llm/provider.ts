@@ -17,6 +17,10 @@ export interface JsonCallOptions<T> {
   maxTokens?: number;
 }
 
+export interface EmbedOptions {
+  taskType?: "RETRIEVAL_QUERY" | "RETRIEVAL_DOCUMENT";
+}
+
 export interface LLMProvider {
   readonly name: "openai" | "gemini";
 
@@ -27,5 +31,5 @@ export interface LLMProvider {
   json<T>(opts: JsonCallOptions<T>): Promise<T>;
 
   /** Batched embeddings. Returns one vector per input, same order. */
-  embed(inputs: string[]): Promise<number[][]>;
+  embed(inputs: string[], opts?: EmbedOptions): Promise<number[][]>;
 }

@@ -18,6 +18,7 @@ PREFIX="build3-cofounder-bot"
 SECRET_KEYS=(
   DATABASE_URL
   OPENAI_API_KEY
+  GOOGLE_AI_KEY
   WATI_API_BASE_URL
   WATI_API_TOKEN
   WATI_WEBHOOK_SECRET
@@ -35,8 +36,8 @@ keychain_suffix_for() {
 
 # Constants — not secrets, baked into env for visibility in logs.
 # Parallel arrays (bash 3.2 compat).
-CONSTANT_KEYS=(NODE_ENV LOG_LEVEL CONSENT_EXPIRY_HOURS)
-CONSTANT_VALS=(production info 72)
+CONSTANT_KEYS=(NODE_ENV LOG_LEVEL CONSENT_EXPIRY_HOURS LLM_PROVIDER GEMINI_MODEL_CHAT GEMINI_MODEL_EMBED)
+CONSTANT_VALS=(production info 72 gemini gemini-2.5-flash gemini-embedding-001)
 
 # --- pre-flight --------------------------------------------------------------
 

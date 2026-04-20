@@ -76,3 +76,11 @@ One entry per significant architectural choice. Format: **Decision → Why → A
 - **Alternatives considered**: Provisioning a new WATI workspace dedicated to the cofounder bot (slower, extra cost, no upside since the existing tenant is already Build3's).
 - **Tradeoffs**: One WATI tenant serves multiple Build3 use cases; template/number contention is possible if other Build3 bots share it. Mitigation: reserve distinct template names (`cofounder_*`) and the shared secret is distinct per webhook.
 - **Date**: 2026-04-19
+
+## ADR-010 — Gemini is now the default LLM path; OpenAI remains a supported fallback
+
+- **Decision**: Keep the provider-agnostic `LLMProvider` interface, but promote Gemini to the default runtime path for chat/json/embeddings. OpenAI remains supported behind `LLM_PROVIDER=openai`.
+- **Why**: The quality issue we observed in the bot was not model-only, but we did want a live second provider rather than a stub. Wiring Gemini for the same call sites lets us compare real-world conversational quality while keeping an escape hatch if a provider regresses.
+- **Alternatives considered**: Stay OpenAI-only (simpler, but blocks side-by-side evaluation); switch everything hard to Gemini and delete OpenAI support (unnecessarily rigid).
+- **Tradeoffs**: We now carry two provider adapters and two secret contracts (`GOOGLE_AI_KEY`, `OPENAI_API_KEY`). Acceptable — the interface boundary was already in place and this is exactly the flexibility it was meant to buy us.
+- **Date**: 2026-04-20

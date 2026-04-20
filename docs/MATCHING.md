@@ -23,13 +23,13 @@ The requester is always excluded. Already-accepted/skipped candidates in the cur
 
 **Goal**: turn 15 plausible candidates into 3 great ones with a one-line "why" each.
 
-- Model: `OPENAI_MODEL_RERANK` (default `gpt-4.1`), temperature 0.2.
-- Prompt: `src/llm/prompts/rerank_v1.ts`.
+- Model: active provider chat model (`GEMINI_MODEL_CHAT` by default, `OPENAI_MODEL_CHAT` when `LLM_PROVIDER=openai`), temperature 0.2.
+- Prompt: `src/llm/prompts/rerank_v2.ts`.
 - Rubric (each scored 0–3, summed):
   - Role fit
+  - Reciprocal fit (does this founder appear to want the kind of counterpart the requester described?)
   - Sector fit
   - Stage fit
-  - Trajectory fit (are they at a comparable level?)
   - Location preference
   - Anti-pref avoidance (negative)
 - Output: strict JSON `[{ founder_id, score, rationale }]`, validated via Zod. On parse failure: retry once; then fall back to retrieval order with a generic rationale.
@@ -42,13 +42,17 @@ Top 3 are returned. The top 1 is shown first; 2–3 are held for the next Skip.
 
 Every inbound user turn runs `RefinementExtractor`:
 
-- Model: `OPENAI_MODEL_CHAT` (default `gpt-4.1`), temperature 0.
-- Prompt: `src/llm/prompts/refinement_v1.ts`.
+- Model: active provider chat model (`GEMINI_MODEL_CHAT` by default, `OPENAI_MODEL_CHAT` when `LLM_PROVIDER=openai`), temperature 0.
+- Prompt: `src/llm/prompts/refinement_v3.ts`.
 - Input: current `search_state` + last user message.
 - Output: `RefinementDelta` (see `API_CONTRACTS.md`).
 - Merge rule: `add` overrides scalars and unions lists; `remove` subtracts; `anti_prefs` appends.
 
-On JSON parse failure twice: fall back to a keyword extractor (simple regex over curated tag dictionary). Never block the conversation.
+On JSON parse failure twice: fall back to a state-aware heuristic extractor. The fallback does two important things:
+- Detects fresh asks and clears stale filters so an old `d2c` preference does not leak into a new `fintech` search.
+- Captures reciprocal free-text constraints like "I have marketing skills, need a technical cofounder" as `must_have` hints.
+
+Never block the conversation.
 
 ---
 
@@ -80,8 +84,9 @@ Defined in `src/matching/weights.ts`. Weights are applied to the **query assembl
 All prompts live under `src/llm/prompts/<name>_v<n>.ts`. Never edit a shipped version in place — bump the version number and update `CLAUDE.md` if the change is semantically significant.
 
 Current versions:
-- `refinement_v1.ts` — user turn → `RefinementDelta`
-- `rerank_v1.ts` — top 15 → top 3 with rubric
+- `voice_v2.ts` — conversational surface + intent classification
+- `refinement_v3.ts` — user turn → `RefinementDelta`
+- `rerank_v2.ts` — top 15 → top 3 with reciprocal-fit rubric
 - `explain_v1.ts` — 1-line rationale per card (used when rerank was skipped)
 - `intro_v1.ts` — mutual-accept intro message
 

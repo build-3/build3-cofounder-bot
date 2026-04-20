@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyDelta, keywordDelta } from "../../src/matching/refinement.js";
+import { applyDelta, heuristicDelta, keywordDelta } from "../../src/matching/refinement.js";
 import type { SearchStateRow } from "../../src/conversation/store.js";
 
 function baseState(): SearchStateRow {
@@ -98,9 +98,38 @@ describe("keywordDelta (fallback extractor)", () => {
     expect(d.anti_prefs).toEqual(expect.arrayContaining(["agencies", "consulting"]));
   });
 
+  it("captures reciprocal-fit hints from self-description", () => {
+    const d = keywordDelta("I have marketing skills and need a technical cofounder");
+    expect(d.add.role).toBe("technical");
+    expect(d.add.must_have).toContain("should want a strong GTM / non-tech partner");
+  });
+
   it("returns an empty delta for empty input", () => {
     const d = keywordDelta("");
     expect(d.add).toEqual({});
     expect(d.anti_prefs).toEqual([]);
+  });
+});
+
+describe("heuristicDelta (state-aware fallback)", () => {
+  it("clears stale filters on a fresh ask restart", () => {
+    const state: SearchStateRow = {
+      ...baseState(),
+      role: "technical",
+      sector: ["d2c"],
+      location: ["Delhi NCR"],
+      mustHave: ["should want a strong GTM / non-tech partner"],
+    };
+
+    const delta = heuristicDelta(
+      state,
+      "find me a high probability match, I have marketing skills and need engineering skills in fintech",
+    );
+
+    expect(delta.add.role).toBe("technical");
+    expect(delta.add.sector).toContain("fintech");
+    expect(delta.remove.sector).toEqual(["d2c"]);
+    expect(delta.remove.location).toEqual(["Delhi NCR"]);
+    expect(delta.remove.must_have).toContain("should want a strong GTM / non-tech partner");
   });
 });

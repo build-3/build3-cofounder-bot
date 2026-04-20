@@ -46,7 +46,7 @@ export async function retrieve(
 ): Promise<RetrievedCandidate[]> {
   const k = args.k ?? 50;
   const queryText = assembleQuery(args.state, args.userTurn);
-  const [vector] = await getLLM().embed([queryText]);
+  const [vector] = await getLLM().embed([queryText], { taskType: "RETRIEVAL_QUERY" });
   if (!vector) return [];
 
   const excluded = args.excludeFounderIds.length
