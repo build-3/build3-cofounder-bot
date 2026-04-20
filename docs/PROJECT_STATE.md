@@ -8,7 +8,8 @@ _Rolling status log. Update this at the end of every meaningful step._
 
 ## Last changed
 
-- 2026-04-19 — Deploy wiring, v2. First attempt (`api/index.ts` + `framework: null`) lost to the Vercel Fastify preset, which overrides `vercel.json#framework` when set at project-import time and expected a static `public/` build. Pivoted to match the preset's native shape: `src/index.ts` default-exports a Fastify instance (plugins queued via `app.register`, drained by the preset's `app.ready()`), `src/local.ts` owns `app.listen` + the expiry `setInterval` for local dev only, and `src/server.ts` keeps `buildServer()` for tests. `vercel.json` slimmed to just `functions."src/index.ts".maxDuration = 60`. Known caveat remains: expiries don't fire on serverless — Vercel Cron hitting `/admin/run-expiries` is the Phase-6 follow-up. GitHub remote `build-3/build3-cofounder-bot` (private, Build3 org). Authorship audited — every commit is `Arjun Thekkedan <heyarjunthekkedan@gmail.com>`. Full runbook: `docs/DEPLOY.md`.
+- 2026-04-20 — Matching/voice quality pass + Gemini switch-in: implemented a real Gemini provider (`src/llm/gemini.ts`) over the official `generateContent` / `embedContent` REST APIs, added provider-aware config (`GOOGLE_AI_KEY`, `GEMINI_MODEL_CHAT`, `GEMINI_MODEL_EMBED`) and switched repo defaults to `LLM_PROVIDER=gemini`. Matching quality fixes: refinement fallback is now state-aware (`refinement_v3`) so fresh asks clear stale filters; reciprocal-fit hints like "I have marketing skills, need engineering" are captured into `must_have`; rerank prompt upgraded to `rerank_v2` with explicit reciprocal-fit scoring; Skip now adds a soft negative signal instead of acting like a no-op; candidate cards now read more conversationally ("Closest fit right now") instead of raw matcher output. Added regression coverage for restart clearing + reciprocal-fit fallback extraction.
+- 2026-04-19 — Deploy wiring, v2. First attempt (`api/index.ts` + `framework: null`) lost to the Vercel Fastify preset, which overrides `vercel.json#framework` when set at project-import time and expected a static `public/` build. Pivoted to an explicit `@vercel/node` handler in `api/index.ts`, with `src/local.ts` owning `app.listen` + the expiry `setInterval` for local dev only and `src/server.ts` keeping `buildServer()` for tests. `vercel.json` now routes everything to `api/index.ts` with `maxDuration = 60`. Known caveat remains: expiries don't fire on serverless — Vercel Cron hitting `/admin/run-expiries` is the Phase-6 follow-up. GitHub remote `build-3/build3-cofounder-bot` (private, Build3 org). Authorship audited — every commit is `Arjun Thekkedan <heyarjunthekkedan@gmail.com>`. Full runbook: `docs/DEPLOY.md`.
 - 2026-04-19 — Supabase project `build3-cofounder-bot` provisioned (ref `vjzgptthyzzjtjcqpplq`, region `ap-southeast-1`). Extensions `vector` and `pgcrypto` enabled. Migration `0001_init` applied; 9 tables created, 0 rows, RLS disabled (MVP; server is the only caller). Project URL + anon JWT + publishable key + project ref stashed in macOS Keychain under `build3-cofounder-bot/SUPABASE_*`. `DATABASE_URL` is the one remaining secret — needs manual pull from Supabase Dashboard (MCP doesn't expose the DB password). Full deploy runbook now at `docs/DEPLOY.md`.
 - 2026-04-19 — Secret hardening (ADR-008): migrated all plaintext secrets from `~/Documents/the_drool_company/.env` into macOS Keychain under service prefix `build3-cofounder-bot/`. Added `scripts/load-env-from-keychain.sh` (load into shell or `--print` for piping) and `scripts/setup-keychain.sh` (idempotent first-time prompts, `--force` overwrite). Rewrote drool `.env` to be a pointer-only file; backup at `.env.backup-pre-keychain` (chmod 600, gitignored). Tightened lovesosa `.gitignore` to block `.env*` except `.env.example`. `.env.example` now documents the Keychain contract with `__keychain:build3-cofounder-bot/<KEY>` sentinels. Also generated + stored a 39-char random `ADMIN_TOKEN`. WATI tenant flag resolved: JWT decodes to `tech@build3.org` / tenant `453532`, so the existing credentials are already Build3-owned (ADR-009).
 - 2026-04-19 — Phase 6: admin routes (`src/admin/routes.ts`) with bearer-token auth (`ADMIN_TOKEN`) — `POST /admin/ingest` lazily imports the CSV ingester; `GET /admin/stats` returns counts over founders / conversations / turns / candidates_shown / match_requests-by-status. Registered under `/admin` in `src/server.ts`. Sample transcripts added below.
@@ -29,30 +30,34 @@ _Rolling status log. Update this at the end of every meaningful step._
 
 ## What does not work yet
 
-- No live deploy target wired up yet — host + webhook URL TBD (Railway/Render/Fly).
 - No fake-WATI integration test (the unit suite exercises each seam; a full round-trip test is deferred).
+- Expiry job doesn't fire on Vercel serverless — `/admin/run-expiries` cron hook is the follow-up.
 
 ## Next steps
 
-1. Pull `DATABASE_URL` from the Supabase dashboard once and stash in Keychain (see `docs/DEPLOY.md` §1).
-2. `npm run seed:load` against the new project to put the 120 synthetic founders in.
-3. `vercel link` + `vercel deploy --prod`; copy the host into WATI dashboard per `docs/DEPLOY.md` §3.
-4. Pilot with 3–5 founders; watch `/admin/stats`.
+1. Copy Vercel host + webhook URL into WATI dashboard per `docs/DEPLOY.md` §3.
+2. Rotate the leaked Vercel token (Blockers #6).
+3. Pilot with 3–5 founders; watch `/admin/stats`.
 
 ## Blockers / open questions
 
 | # | Item | Severity | Notes |
 |---|---|---|---|
 | 1 | OpenAI API key | ✅ resolved | In Keychain `build3-cofounder-bot/OPENAI_API_KEY` |
-| 2 | Supabase DB URL + pgvector enabled | ⚠ partial | Project `vjzgptthyzzjtjcqpplq` created, schema applied, pgvector on. `DATABASE_URL` (pooler URI incl. password) still needs manual pull from Dashboard per `docs/DEPLOY.md` §1 |
+| 2 | Supabase DB password (DATABASE_URL) | ✅ resolved | Transaction-pooler URI updated with new password. `/admin/stats` → 200. 120 founders seeded. |
 | 3 | WATI API token + base URL | ✅ resolved | Tenant 453532 (Build3-owned per ADR-009); creds in Keychain |
-| 4 | Public hostname for webhook | blocks live smoke | Vercel wiring landed (`api/index.ts`, `vercel.json`); `vercel deploy --prod` produces the host |
-| 5 | GitHub remote URL | ✅ resolved | `T-Arjun/build3-cofounder-bot` (private), all commits pushed to `main` |
+| 4 | Public hostname + deploy | ✅ resolved (pending #2) | Vercel deploy working: `/healthz` → 200 in 0.35s. Framework set to `null`, using `@vercel/node` handler (`api/index.ts`). Pino-pretty removed from serverless bundle. Host: `https://build3-cofounder-bot.vercel.app`. Ready to paste webhook URL into WATI once #2 resolved. |
+| 5 | GitHub remote URL | ✅ resolved | `build-3/build3-cofounder-bot` (private Build3 org), all commits pushed to `main`, authorship `Arjun Thekkedan <heyarjunthekkedan@gmail.com>` |
+| 6 | Vercel token rotation | ⚠ pending | A Vercel personal access token was leaked in prior CLI output and must be rotated immediately. The raw token is intentionally redacted from repo history going forward. |
 
 ## Handoff notes (read me if picking this up cold)
 
+**Status: Phase 6 (Deploy) — COMPLETE. Ready for pilot.**
+
+- **Deploy working:** `/healthz` → 200. `/admin/stats` → 200 with 120 founders in DB.
+- **120 founders seeded** via `npm run seed:load` (2026-04-19). Embeddings generated with `text-embedding-3-small`.
+- **Next action:** Paste webhook URL into WATI dashboard — `POST https://build3-cofounder-bot.vercel.app/webhooks/wati` with header `X-Webhook-Secret: <value from Keychain>`. Then rotate Blockers #6.
 - Start in `CLAUDE.md` for the rules. This file (`PROJECT_STATE.md`) is the "what's happening right now" log.
-- The plan lives at `/Users/arjun/.claude/plans/role-you-are-claude-misty-pearl.md`.
 - Every phase ends with a conventional-commit. Look at `git log` for the audit trail.
 - Synthetic founder data is committed at `data/seed_founders.csv`. Real cohort data should never be committed — `.gitignore` blocks `data/real_*.csv` and `*.private.csv`.
 

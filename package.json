@@ -2,7 +2,7 @@
   "name": "build3-cofounder-bot",
   "version": "0.1.0",
   "private": true,
-  "description": "WhatsApp cofounder matching bot for the Build3 founder cohort (WATI + OpenAI + Postgres/pgvector).",
+  "description": "WhatsApp cofounder matching bot for the Build3 founder cohort (WATI + Gemini/OpenAI + Postgres/pgvector).",
   "type": "module",
   "engines": {
     "node": ">=20"

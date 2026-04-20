@@ -10,6 +10,10 @@ export interface CandidateCard {
   city: string;
   headline: string;
   rationale: string;
+  seniority: string;
+  years_exp: number;
+  sector_tags: string[];
+  stage_tags: string[];
 }
 
 export interface RankedResult {
@@ -41,6 +45,10 @@ export async function runMatching(args: {
         city: c.city,
         headline: c.headline,
         rationale: r.rationale,
+        seniority: c.seniority,
+        years_exp: c.years_exp,
+        sector_tags: c.sector_tags,
+        stage_tags: c.stage_tags,
       };
     })
     .filter((x): x is CandidateCard => x !== null);
@@ -103,11 +111,48 @@ export async function markShownAction(
 }
 
 export function formatCardText(card: CandidateCard, index: number, total: number): string {
-  const header = total > 1 ? `Match ${index + 1} of ${total}\n\n` : "";
+  const header = total > 1
+    ? `Closest fit right now (${index + 1}/${total})\n\n`
+    : "Closest fit right now\n\n";
+
+  // Meta line: seniority · years · top stage · top 2 sectors.
+  // Kept short so the card stays scannable on a phone.
+  const meta: string[] = [];
+  if (card.seniority) meta.push(humanSeniority(card.seniority));
+  if (card.years_exp > 0) meta.push(`${card.years_exp} yrs`);
+  if (card.stage_tags[0]) meta.push(humanTag(card.stage_tags[0]));
+  const topSectors = card.sector_tags.slice(0, 2).map(humanTag);
+  if (topSectors.length) meta.push(topSectors.join(" / "));
+  const metaLine = meta.length ? `${meta.join(" · ")}\n` : "";
+
   return (
     `${header}*${card.name}* — ${card.city}\n` +
-    `${card.headline}\n\n` +
-    `_Why:_ ${card.rationale}\n\n` +
+    `${card.headline}\n` +
+    `${metaLine}\n` +
+    `_Why this could work:_ ${card.rationale}\n\n` +
     `Reply *Accept* to connect, *Skip* to see the next.`
   );
+}
+
+function humanSeniority(s: string): string {
+  switch (s) {
+    case "founder-level": return "Founder-level";
+    case "senior-ic":     return "Senior IC";
+    case "operator":      return "Operator";
+    default:              return s;
+  }
+}
+
+function humanTag(t: string): string {
+  // "b2b-saas" → "B2B SaaS", "pre-seed" → "Pre-seed", "fintech" → "Fintech"
+  const map: Record<string, string> = {
+    "b2b-saas": "B2B SaaS",
+    "ai-infra": "AI infra",
+    "pre-idea": "Pre-idea",
+    "pre-seed": "Pre-seed",
+    "series-a": "Series A",
+    "d2c": "D2C",
+  };
+  if (map[t]) return map[t]!;
+  return t.charAt(0).toUpperCase() + t.slice(1);
 }
