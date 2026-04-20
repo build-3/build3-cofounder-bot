@@ -78,6 +78,90 @@ export async function dispatchInbound(msg: WatiInbound, deps: DispatchDeps): Pro
   }
 
   const conv = await getOrCreateConversation(founder.id);
+  const sql = getSql();
+
+  // Serialize per-conversation dispatch. WATI retries a message with a NEW
+  // wati_message_id when our function is slow (observed: same WhatsApp turn
+  // delivered 6x within seconds, producing duplicate candidate cards). A
+  // row in `dispatch_locks` is the lease; siblings see the fresh lease and
+  // no-op. Lease is auto-released in a finally block; a 30s TTL handles the
+  // case where the function is killed mid-flight on Vercel.
+  const lockHolder = msg.id;
+  const lockAcquired = await acquireDispatchLock(sql, conv.id, lockHolder);
+  if (!lockAcquired) {
+    logger.info(
+      { convId: conv.id, watiMessageId: msg.id },
+      "sibling dispatcher holds the lock — no-op",
+    );
+    return;
+  }
+
+  try {
+    await dispatchLocked(msg, deps, founder, conv, sql);
+  } finally {
+    await releaseDispatchLock(sql, conv.id, lockHolder);
+  }
+}
+
+async function acquireDispatchLock(
+  sql: ReturnType<typeof getSql>,
+  conversationId: string,
+  holder: string,
+): Promise<boolean> {
+  // Atomic: insert if absent, OR take over a stale lease (>30s old).
+  const rows = await sql<Array<{ conversation_id: string }>>`
+    INSERT INTO dispatch_locks (conversation_id, held_by, acquired_at)
+    VALUES (${conversationId}, ${holder}, now())
+    ON CONFLICT (conversation_id) DO UPDATE
+      SET held_by = EXCLUDED.held_by,
+          acquired_at = EXCLUDED.acquired_at
+      WHERE dispatch_locks.acquired_at < now() - interval '30 seconds'
+    RETURNING conversation_id
+  `;
+  return rows.length > 0;
+}
+
+async function releaseDispatchLock(
+  sql: ReturnType<typeof getSql>,
+  conversationId: string,
+  holder: string,
+): Promise<void> {
+  try {
+    await sql`
+      DELETE FROM dispatch_locks
+      WHERE conversation_id = ${conversationId} AND held_by = ${holder}
+    `;
+  } catch (err) {
+    // Non-fatal: the 30s TTL on acquire guarantees progress even if release fails.
+    logger.warn({ err, conversationId }, "dispatch lock release failed (non-fatal)");
+  }
+}
+
+async function dispatchLocked(
+  msg: WatiInbound,
+  deps: DispatchDeps,
+  founder: Founder,
+  conv: { id: string; founderId: string },
+  sql: ReturnType<typeof getSql>,
+): Promise<void> {
+  // Soft idempotency on top of the lock: if the exact same inbound text
+  // landed on this conversation within the last 15s, it's a retry — no-op.
+  const recentSameText = await sql<Array<{ id: string }>>`
+    SELECT id FROM turns
+    WHERE conversation_id = ${conv.id}
+      AND direction = 'in'
+      AND text = ${msg.text ?? msg.buttonPayload ?? "(interactive)"}
+      AND created_at > now() - interval '15 seconds'
+    LIMIT 1
+  `;
+  if (recentSameText.length > 0) {
+    logger.info(
+      { convId: conv.id, watiMessageId: msg.id },
+      "duplicate inbound text within 15s — no-op",
+    );
+    return;
+  }
+
   const state = await getSearchState(conv.id);
   const recent = await getRecentTurns(conv.id);
   const searchActive = Boolean(
@@ -360,7 +444,16 @@ async function runAndReply(
     return;
   }
 
-  await recordShown(ctx.conv.id, [cards[0]!]);
+  const recorded = await recordShown(ctx.conv.id, [cards[0]!]);
+  if (!recorded) {
+    // A concurrent dispatcher already recorded this founder. Swallow silently
+    // — sending the card would duplicate. See 0002_concurrency_guards.sql.
+    logger.warn(
+      { convId: ctx.conv.id, founderId: cards[0]!.founder_id },
+      "duplicate candidate race — dropping send",
+    );
+    return;
+  }
   const body = formatCardText(cards[0]!, 0, 1);
   await ctx.deps.wati.sendButtons({
     waId: ctx.founder.phone,

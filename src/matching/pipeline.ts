@@ -56,21 +56,32 @@ export async function runMatching(args: {
   return { cards, retrieved };
 }
 
+/**
+ * Record a card as shown. Returns true if inserted, false if we lost a race
+ * (a concurrent dispatcher already recorded this founder for this conversation
+ * — see 0002_concurrency_guards.sql). Caller MUST NOT send an outbound
+ * message when this returns false, otherwise the user gets duplicate cards.
+ */
 export async function recordShown(
   conversationId: string,
   cards: CandidateCard[],
   sql: Sql = getSql(),
-): Promise<void> {
-  if (cards.length === 0) return;
+): Promise<boolean> {
+  if (cards.length === 0) return false;
+  let allInserted = true;
   await sql.begin(async (tx) => {
     for (let i = 0; i < cards.length; i++) {
       const c = cards[i]!;
-      await tx`
+      const rows = await tx<Array<{ id: string }>>`
         INSERT INTO candidates_shown (conversation_id, founder_id, rank, rationale, action)
         VALUES (${conversationId}, ${c.founder_id}, ${i + 1}, ${c.rationale}, 'shown')
+        ON CONFLICT (conversation_id, founder_id) DO NOTHING
+        RETURNING id
       `;
+      if (rows.length === 0) allInserted = false;
     }
   });
+  return allInserted;
 }
 
 export async function getShownFounderIds(
