@@ -36,8 +36,16 @@ export interface RankedCandidate {
   rationale: string;
 }
 
-const TOP_N_TO_RERANK = 15;
+const TOP_N_TO_RERANK = 8;
 const RETURN_TOP = 3;
+// Vercel caps serverless at 60s. LLM rerank is the single biggest time sink;
+// if it can't finish in this budget we abandon it and use the deterministic
+// fallback so the user still gets a card instead of a 504.
+const RERANK_TIMEOUT_MS = 25_000;
+// Output cap prevents the model from producing a partially-completed JSON blob
+// that blows past response_format=json_object's implicit budget. 8 candidates
+// × ~180 tokens of rationale/breakdown fits comfortably in 2k.
+const RERANK_MAX_TOKENS = 2000;
 
 function normalize(text: string): string {
   return text.toLowerCase();
@@ -131,7 +139,7 @@ export async function rerank(
   }));
 
   try {
-    const parsed = await getLLM().json<z.infer<typeof RerankOutputSchema>>({
+    const llmCall = getLLM().json<z.infer<typeof RerankOutputSchema>>({
       system: RERANK_SYSTEM,
       user: buildRerankUserPrompt({
         searchState: {
@@ -149,8 +157,13 @@ export async function rerank(
       }),
       schemaName: "RerankOutput",
       temperature: 0.2,
+      maxTokens: RERANK_MAX_TOKENS,
       parse: (raw) => RerankOutputSchema.parse(JSON.parse(raw)),
     });
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("rerank_timeout")), RERANK_TIMEOUT_MS),
+    );
+    const parsed = await Promise.race([llmCall, timeout]);
     // Filter to ids the LLM actually knew about (guard against hallucinated ids).
     const known = new Set(head.map((c) => c.founder_id));
     const filtered = parsed.ranked.filter((r) => known.has(r.founder_id));
