@@ -35,8 +35,30 @@ export const watiWebhookRoute: FastifyPluginAsync = async (app: FastifyInstance)
 
     const headerSecret = req.headers["x-webhook-secret"];
     const querySecret = (req.query as { secret?: string } | undefined)?.secret;
-    const provided = typeof headerSecret === "string" ? headerSecret : querySecret;
+    // Fallback: parse from raw URL in case Fastify's query parser misses it
+    // (observed in prod behind Vercel's serverless shim — query-param path
+    // returned 401 while header path worked with identical secret value).
+    let urlSecret: string | undefined;
+    try {
+      const qs = req.url.split("?")[1];
+      if (qs) urlSecret = new URLSearchParams(qs).get("secret") ?? undefined;
+    } catch {
+      /* noop */
+    }
+    const provided =
+      typeof headerSecret === "string" ? headerSecret : (querySecret ?? urlSecret);
     if (provided !== cfg.WATI_WEBHOOK_SECRET) {
+      logger.warn(
+        {
+          url: req.url,
+          hasHeader: typeof headerSecret === "string",
+          hasQuery: typeof querySecret === "string",
+          hasUrlParsed: typeof urlSecret === "string",
+          providedLen: typeof provided === "string" ? provided.length : 0,
+          expectedLen: cfg.WATI_WEBHOOK_SECRET.length,
+        },
+        "webhook secret mismatch",
+      );
       throw new UnauthorizedError("invalid webhook secret");
     }
 
