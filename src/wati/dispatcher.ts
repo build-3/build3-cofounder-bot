@@ -272,6 +272,8 @@ async function onGreeting(ctx: Ctx): Promise<void> {
     recentTurns: ctx.recent,
     userTurn: ctx.userTurn,
   });
+  // Thread-pickup line only. The NEXT inbound (yes/refine/etc.) runs matching;
+  // we don't auto-push a card on the greeting itself so the user stays in control.
   await sendText(ctx, text, "greeting");
 }
 
