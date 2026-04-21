@@ -96,6 +96,16 @@ export async function classifyIntent(input: {
     return { intent: "accept", confidence: 0.95, pick: n };
   }
 
+  // Affirmation shortcut: "yes", "yes please", "ya", "sure", "keep going",
+  // "continue", "go ahead". When a search is already active, this means
+  // "pick up where we left off" → refine (runs matching). When no search
+  // is active yet, it's just a greeting ack.
+  if (/^\s*(yes(\s+please)?|ya|yep|yeah|yup|sure|ok(ay)?|go ahead|keep going|continue|please do|do it|let'?s go)\s*[.!]?\s*$/i.test(text)) {
+    return input.searchActive
+      ? { intent: "refine", confidence: 0.9 }
+      : { intent: "greeting", confidence: 0.9 };
+  }
+
   // Deterministic discover/refine catch for obvious search phrasings. Stops
   // Gemini from misclassifying "find me a sales founder" as a greeting.
   // We only fire when the ask mentions a cofounder-role word AND NOT an
