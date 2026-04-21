@@ -21,7 +21,7 @@ describe("assembleQuery", () => {
 
   it("repeats the role clause in proportion to role_tags weight (~3x at 0.35)", () => {
     const q = assembleQuery({ ...baseState(), role: "sales" }, "find me someone");
-    const matches = q.match(/Looking for a sales cofounder/g) ?? [];
+    const matches = q.match(/Candidate is a sales operator/g) ?? [];
     expect(matches.length).toBe(Math.max(1, Math.round(DEFAULT_WEIGHTS.role_tags * 10)));
     expect(matches.length).toBeGreaterThanOrEqual(3);
   });
@@ -53,7 +53,7 @@ describe("assembleQuery", () => {
 
   it("omits empty fields rather than emitting blanks", () => {
     const q = assembleQuery(baseState(), "hi");
-    expect(q).not.toContain("Looking for a");
+    expect(q).not.toContain("Candidate is a");
     expect(q).not.toContain("Sectors:");
     expect(q).not.toContain("Stage focus:");
     expect(q).not.toContain("Seniority:");
@@ -68,7 +68,7 @@ describe("assembleQuery", () => {
       "...",
       { ...DEFAULT_WEIGHTS, role_tags: 0.1 }, // ~1 repetition
     );
-    const matches = q.match(/Looking for a growth cofounder/g) ?? [];
+    const matches = q.match(/Candidate is a growth operator/g) ?? [];
     expect(matches.length).toBe(1);
   });
 });

@@ -24,7 +24,11 @@ operator would — bullet-prose, honest, specific. You also have judgement
 about when an intro is premature and should wait.
 
 Score each candidate on this rubric (0-3 each):
-- role_fit: does this person have the role the founder wants to meet?
+- role_fit: does this person's OWN role (their role_tags / headline) match
+  the role the founder is asking for? The founder is looking for someone who
+  IS that role — not someone who is LOOKING FOR that role. An engineer whose
+  summary says "wants a GTM cofounder" is NOT a role_fit when the asker
+  wants a GTM cofounder. Score 0 in that case and rank them last.
 - reciprocal_fit: does this person's profile suggest they would actually want
   the kind of founder who is asking? Use headline, summary, and free-text
   must_have clues for complementarity.

@@ -47,9 +47,15 @@ export function assembleQuery(
   const parts: string[] = [];
 
   // Role comes first and is repeated in proportion to its weight.
+  // We embed the CANDIDATE-side description so retrieval finds profiles whose
+  // own role matches the ask, not profiles whose "looking for" text matches.
   if (state.role) {
     const reps = Math.max(1, Math.round(weights.role_tags * 10)); // ≈3
-    parts.push(Array(reps).fill(`Looking for a ${state.role} cofounder`).join(". "));
+    parts.push(
+      Array(reps)
+        .fill(`Candidate is a ${state.role} operator. Role: ${state.role}.`)
+        .join(" "),
+    );
   }
 
   if (state.sector.length) {

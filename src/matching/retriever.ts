@@ -30,6 +30,34 @@ function toPgVectorLiteral(vec: number[]): string {
 }
 
 /**
+ * Role synonyms used as a hard tag filter. Returns null when no role is set
+ * (meaning "no filter"). Keep synonyms aligned with the tag vocabulary we
+ * write into founders.role_tags at ingest — see data/seed_founders.csv for
+ * the canonical list.
+ */
+function synonymsForRole(role: string | null): string[] | null {
+  if (!role) return null;
+  const r = role.toLowerCase();
+  if (["sales", "gtm", "bd", "marketing", "growth"].includes(r)) {
+    return ["sales", "gtm", "bd", "marketing", "growth"];
+  }
+  if (["technical", "tech", "engineering", "engineer"].includes(r)) {
+    return ["technical", "tech", "engineering", "engineer", "cto"];
+  }
+  if (["product", "pm"].includes(r)) {
+    return ["product", "pm"];
+  }
+  if (["design", "designer"].includes(r)) {
+    return ["design", "designer"];
+  }
+  if (["ops", "operations"].includes(r)) {
+    return ["ops", "operations"];
+  }
+  // Unknown role string → don't filter, let semantic search handle it.
+  return null;
+}
+
+/**
  * Hybrid retrieval. Steps:
  *  1. Assemble weighted query text from search state.
  *  2. Embed query.
@@ -53,6 +81,14 @@ export async function retrieve(
     ? args.excludeFounderIds
     : ["00000000-0000-0000-0000-000000000000"];
 
+  // Hard role filter. role_tags on founders describe the founder's OWN role
+  // (they ARE sales / ARE a PM / ARE technical). When the asker wants a role
+  // X, we MUST return candidates whose role_tags include X — otherwise the
+  // embedding can drag in profiles that merely mention role X in their
+  // "looking for" text (e.g. an engineer who wants a GTM cofounder appearing
+  // as a GTM match). See PROJECT_STATE for the 2026-04-22 incident.
+  const roleFilter = synonymsForRole(args.state.role);
+
   const rows = await sql<Array<{
     id: string; name: string; city: string; headline: string; summary: string;
     role_tags: string[]; sector_tags: string[]; stage_tags: string[]; seniority: string;
@@ -66,6 +102,7 @@ export async function retrieve(
     JOIN founders f ON f.id = e.founder_id
     WHERE f.opted_in = true
       AND f.id != ALL(${excluded}::uuid[])
+      AND (${roleFilter === null} OR f.role_tags && ${roleFilter ?? []}::text[])
     ORDER BY e.embedding <=> ${toPgVectorLiteral(vector)}::vector
     LIMIT ${k}
   `;
