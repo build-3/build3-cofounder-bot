@@ -48,7 +48,8 @@ export type Situation =
   | "error_generic"
   | "clarify"
   | "nothing_to_accept"
-  | "topic_switch";
+  | "topic_switch"
+  | "sector_gap_preamble";
 
 /**
  * v3 INTENT_SYSTEM — adds `topic_switch` to the intent enum. A topic switch
@@ -254,6 +255,17 @@ function situationGuidance(s: Situation): string {
         "matching. Then one question: do they want to pause the cofounder",
         "search, or keep going with a different cofounder ask? Do not",
         "pretend you can help with the other thing.",
+      ].join(" ");
+    case "sector_gap_preamble":
+      return [
+        "The user asked for a cofounder in a specific domain (defence tech,",
+        "quantum, spacetech, whatever) and the cohort has nobody matching.",
+        "You're about to show them the closest adjacent match instead.",
+        "Write ONE honest one-liner they'll see RIGHT BEFORE the candidate",
+        "card — something like 'No defence-tech folks in the cohort yet —",
+        "closest technical match is below, take a look:'. Mirror the",
+        "domain word they used. Don't apologise. Don't upsell the match.",
+        "Under 25 words, no emoji, no colon-trailing fluff. Prose only.",
       ].join(" ");
   }
 }

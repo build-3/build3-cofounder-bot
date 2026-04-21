@@ -202,6 +202,39 @@ describe("rerank (v3 schema)", () => {
     expect(ranked[0]!.hold_reason).toBe("");
   });
 
+  it("propagates breakdown.sector_fit so the dispatcher can flag a domain gap", async () => {
+    const id = "88888888-8888-8888-8888-888888888888";
+    __setLLMForTests(
+      stubLLM({
+        ranked: [
+          {
+            founder_id: id,
+            score: 6,
+            rationale: "closest technical operator although sector is off",
+            bullets: ["engineer"],
+            drawback: "",
+            intro_recommendation: "warm",
+            hold_reason: "",
+            breakdown: {
+              role_fit: 3,
+              reciprocal_fit: 1,
+              sector_fit: 0,
+              stage_fit: 2,
+              location_fit: 2,
+              anti_pref: 0,
+            },
+          },
+        ],
+      }),
+    );
+    const ranked = await rerank(
+      [makeCandidate(id)],
+      emptyState,
+      "find me a technical cofounder in defence tech",
+    );
+    expect(ranked[0]!.sector_fit).toBe(0);
+  });
+
   it("drops hallucinated founder_ids the reranker invented", async () => {
     const realId = "44444444-4444-4444-4444-444444444444";
     const hallucinated = "99999999-9999-9999-9999-999999999999";

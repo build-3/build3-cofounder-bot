@@ -217,6 +217,7 @@ function minimalFallback(s: Situation, firstName: string): string {
     case "clarify":        return "Could you say a bit more about who you're looking for?";
     case "nothing_to_accept": return "Nothing to accept yet — tell me who you're looking for first.";
     case "topic_switch":   return "I only do cofounder matching — not investors or other intros. Want me to pause your search, or keep going with a different cofounder ask?";
+    case "sector_gap_preamble": return "Nobody in the cohort fits that exact sector — closest match is below:";
   }
 }
 

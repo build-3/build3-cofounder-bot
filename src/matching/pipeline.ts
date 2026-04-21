@@ -33,6 +33,9 @@ export interface CandidateCard {
   years_exp: number;
   sector_tags: string[];
   stage_tags: string[];
+  /** 0-3 from the reranker breakdown. 0 means this card misses the asked
+   * sector entirely; the dispatcher prepends an honest gap preamble. */
+  sector_fit?: number;
 }
 
 export interface RankedResult {
@@ -75,6 +78,7 @@ export async function runMatching(args: {
         years_exp: c.years_exp,
         sector_tags: c.sector_tags,
         stage_tags: c.stage_tags,
+        ...(typeof r.sector_fit === "number" ? { sector_fit: r.sector_fit } : {}),
       };
     })
     .filter((x): x is CandidateCard => x !== null);
