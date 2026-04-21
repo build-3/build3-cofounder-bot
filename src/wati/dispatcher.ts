@@ -15,14 +15,12 @@ import {
 } from "../conversation/voice.js";
 import {
   formatCardText,
-  formatTwoCardsText,
   getLastShownFounderId,
   getLastShownFounderIds,
   getShownFounderIds,
   markShownAction,
   recordShown,
   runMatching,
-  shouldShowTwo,
 } from "../matching/pipeline.js";
 import { applyDelta, extractRefinement } from "../matching/refinement.js";
 import { onTargetAccept, onTargetDecline, propose } from "../consent/machine.js";
@@ -478,6 +476,22 @@ async function runAndReply(
   state: Awaited<ReturnType<typeof getSearchState>>,
 ): Promise<void> {
   const shown = await getShownFounderIds(ctx.conv.id);
+
+  // Hard cap: at most 3 candidates shown per conversation. After that,
+  // keep asking clarifying questions instead of grinding through the
+  // rest of the cohort.
+  const MAX_CARDS_PER_CONV = 3;
+  if (shown.length >= MAX_CARDS_PER_CONV) {
+    const text = await composeReply({
+      situation: "no_matches",
+      founderFirstName: firstName(ctx.founder),
+      recentTurns: ctx.recent,
+      userTurn: ctx.userTurn,
+    });
+    await sendText(ctx, text, "cap-reached");
+    return;
+  }
+
   const { cards } = await runMatching({
     requesterId: ctx.founder.id,
     state,
@@ -497,26 +511,8 @@ async function runAndReply(
     return;
   }
 
-  // Two-card render: both cards are warm and runner-up is within 60% of top.
-  if (shouldShowTwo(cards)) {
-    const pair: [typeof cards[0], typeof cards[0]] = [cards[0]!, cards[1]!];
-    const recorded = await recordShown(ctx.conv.id, pair);
-    if (!recorded) {
-      logger.warn(
-        { convId: ctx.conv.id },
-        "duplicate candidate race on two-card send — dropping",
-      );
-      return;
-    }
-    const body = formatTwoCardsText(pair);
-    // Typed 1/2/Skip replies only — WATI caps at 3 buttons and we need all
-    // three choices to read cleanly. See spec B1 rollout notes.
-    await ctx.deps.wati.sendText({ waId: ctx.founder.phone, text: body });
-    await insertOutboundTurn({ conversationId: ctx.conv.id, text: body, intent: "candidates-2" });
-    return;
-  }
-
-  // Single-card render (warm or hold).
+  // Single-card render only (warm or hold). Two-card path was removed —
+  // users prefer one person at a time with Accept/Skip buttons.
   const top = cards[0]!;
   const recorded = await recordShown(ctx.conv.id, [top]);
   if (!recorded) {
