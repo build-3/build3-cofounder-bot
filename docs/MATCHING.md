@@ -24,7 +24,7 @@ The requester is always excluded. Already-accepted/skipped candidates in the cur
 **Goal**: turn 15 plausible candidates into 3 great ones with a one-line "why" each.
 
 - Model: active provider chat model (`GEMINI_MODEL_CHAT` by default, `OPENAI_MODEL_CHAT` when `LLM_PROVIDER=openai`), temperature 0.2.
-- Prompt: `src/llm/prompts/rerank_v2.ts`.
+- Prompt: `src/llm/prompts/rerank_v4.ts`.
 - Rubric (each scored 0–3, summed):
   - Role fit
   - Reciprocal fit (does this founder appear to want the kind of counterpart the requester described?)
@@ -32,9 +32,30 @@ The requester is always excluded. Already-accepted/skipped candidates in the cur
   - Stage fit
   - Location preference
   - Anti-pref avoidance (negative)
-- Output: strict JSON `[{ founder_id, score, rationale }]`, validated via Zod. On parse failure: retry once; then fall back to retrieval order with a generic rationale.
+- Output: strict JSON `[{ founder_id, score, rationale, bullets, drawback }]`, validated via Zod. On parse failure: retry once; then fall back to retrieval order with a derived rationale and headline-based bullets.
+  - `rationale` — one short sentence, re-used as the requester's note to the target when they accept.
+  - `bullets` — 2–3 operator-voice one-liners that render as the card body. Grounded in the candidate payload; empty array is a valid fallback and the card renders from `rationale` instead.
+  - `drawback` — one honest "this could fail because…" sentence. Empty string means the card omits the line.
 
 Top 3 are returned. The top 1 is shown first; 2–3 are held for the next Skip.
+
+### Card shape (rerank_v3 + formatCardText)
+
+Rendered in [`src/matching/pipeline.ts`](../src/matching/pipeline.ts) by `formatCardText`:
+
+```
+*Name* — City
+
+• bullet one
+• bullet two
+• bullet three
+
+Potential drawback: <one grounded sentence>
+
+Reply *Accept* to connect, *Skip* to see the next.
+```
+
+No "Closest fit right now" header, no seniority/years/stage meta line. Bullets come from the reranker and are not persisted across turns — only `rationale` is stored on `candidates_shown` so the consent flow can re-use it as the requester's note.
 
 ---
 
@@ -84,11 +105,21 @@ Defined in `src/matching/weights.ts`. Weights are applied to the **query assembl
 All prompts live under `src/llm/prompts/<name>_v<n>.ts`. Never edit a shipped version in place — bump the version number and update `CLAUDE.md` if the change is semantically significant.
 
 Current versions:
-- `voice_v2.ts` — conversational surface + intent classification
+- `voice_v3.ts` — conversational surface + intent classification; adds `topic_switch` (Batch B3), `force_intro`, and numbered-pick deterministic parsing (Batch B1)
 - `refinement_v3.ts` — user turn → `RefinementDelta`
-- `rerank_v2.ts` — top 15 → top 3 with reciprocal-fit rubric
+- `rerank_v4.ts` — top 8 → top 3 with reciprocal-fit rubric + `intro_recommendation` (warm/hold) + `hold_reason` (Batch B2). Schema defaults make it backwards-compatible with v3 responses.
 - `explain_v1.ts` — 1-line rationale per card (used when rerank was skipped)
 - `intro_v1.ts` — mutual-accept intro message
+
+### Card rendering (post-Batch-B)
+
+`runAndReply` picks between three shapes depending on the reranker output:
+
+1. **Two cards, one outbound** — when two candidates come back warm and `score[1] >= 0.6 * score[0]`. Single `sendText` with a numbered body; typed `1` / `2` / `Skip` resolve deterministically via the classifier.
+2. **Single warm card** — default. `sendButtons` with `Accept` / `Skip`.
+3. **Single hold card** — when the top card is `intro_recommendation: "hold"`. Drawback slot becomes "Holding off on this intro: …"; `sendButtons` with `Force intro` / `Skip`. `onForceIntro` records `action = 'forced'` on `candidates_shown` so override rate is measurable.
+
+In all three shapes the dispatcher writes exactly one `turns` row and one `sendButtons`/`sendText` call — the one-outbound-per-inbound contract is preserved.
 
 ---
 

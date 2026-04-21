@@ -84,3 +84,22 @@ One entry per significant architectural choice. Format: **Decision → Why → A
 - **Alternatives considered**: Stay OpenAI-only (simpler, but blocks side-by-side evaluation); switch everything hard to Gemini and delete OpenAI support (unnecessarily rigid).
 - **Tradeoffs**: We now carry two provider adapters and two secret contracts (`GOOGLE_AI_KEY`, `OPENAI_API_KEY`). Acceptable — the interface boundary was already in place and this is exactly the flexibility it was meant to buy us.
 - **Date**: 2026-04-20
+
+## ADR-011 — Candidate card becomes bullet-prose with a grounded drawback (rerank_v3, voice_v3)
+
+- **Decision**: Reshape the candidate card from structured meta + "Why this could work" to operator-voice bullets + an honest "Potential drawback" line. Rerank prompt bumped to `rerank_v3` to return `bullets[]` and `drawback` alongside `rationale`. Voice prompt bumped to `voice_v3` with a two-beat greeting and a warmer `non_cohort` rejection.
+- **Why**: A WhatsApp conversation with a prospective founder (2026-04-21) read as a matcher wrapped in a menu — scripted greeting, Closest-fit header, tag soup, flat rejection. Boardy reads as a thoughtful operator because the card is prose with a drawback and the opener explains *how* matching works before asking for input. The gap was posture, not plumbing.
+- **Alternatives considered**: (a) Keep v2 and iterate copy in place — violates CLAUDE.md rule #3 (versioned prompts, no in-place edits). (b) Store bullets/drawback in a new column on `candidates_shown` — would require a migration; deferred, bullets are now in-memory only while `rationale` continues to serve the consent flow.
+- **Tradeoffs**: Two more fields for the LLM to get right per candidate, which costs tokens and one more way the response can misbehave. Schema defaults them to empty so an old-shape response still parses, and `formatCardText` falls back to `rationale` when bullets are empty. Rollback = one-line import flip (`rerank_v3` → `rerank_v2`, `voice_v3` → `voice_v2`). Batch B (qualified-no / two-at-a-time / topic-switch intent) is explicitly deferred.
+- **Date**: 2026-04-21
+
+## ADR-012 — Two-at-a-time cards, hold recommendation, and topic_switch intent (rerank_v4, Batch B)
+
+- **Decision**: Three structural changes that move the bot from "one candidate, one button-pair, one outbound" to "a thoughtful operator presenting up to two options, honestly, including a no."
+  - **B1.** When the reranker returns at least two candidates and `score[1] >= 0.6 * score[0]` (and both are warm), `runAndReply` packs them into a single outbound with numbered bodies (1 / 2 / Skip typed replies). Still exactly one outbound per inbound.
+  - **B2.** `rerank_v4` adds `intro_recommendation: "warm" | "hold"` and `hold_reason`. When the top card is `hold`, the card renders "Holding off on this intro: …" with a `Force intro` override button. `onForceIntro` in the dispatcher records `action = 'forced'` on the shown row so override rate is measurable later.
+  - **B3.** `topic_switch` joins the `VoiceIntent` union for asks we don't service (investors, legal, cold emails). Classifier is confidence-gated (<0.7 → clarify). `onTopicSwitch` replies honestly and leaves `search_state` untouched so a pivot back is free.
+- **Why**: The bot's current weakness isn't card *quality* (Batch A fixed that); it's *rhythm* — a slot-machine cadence of one-candidate-at-a-time, no concept of "this one's strong but not right now", and a router that silently turns "find me investors" into a broken refine. Boardy reads like a curator precisely because it shows two at once, volunteers a no, and handles topic pivots honestly.
+- **Alternatives considered**: (a) Two candidates as two separate outbound bubbles — simpler UX but breaks the one-outbound invariant the dispatch lock is built around, so rejected. (b) `hold` as a soft-skip rather than an explicit card type — loses the override signal; we want to measure it. (c) `topic_switch` as a new `off_topic` sub-case — conflates small talk with explicit service asks.
+- **Tradeoffs**: The reranker now has two more fields to get right per candidate; schema defaults (`warm`, `""`) mean a v3-shape response still parses unchanged. Two-card mode drops from interactive buttons to typed replies (WATI caps at 3 buttons; Accept/Skip/Force-intro all need a home). Shipped without a feature flag per request — rollback is one PR revert. Batch A's contract (exactly one outbound per inbound) is preserved verbatim.
+- **Date**: 2026-04-21

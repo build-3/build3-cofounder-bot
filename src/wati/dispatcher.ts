@@ -15,11 +15,14 @@ import {
 } from "../conversation/voice.js";
 import {
   formatCardText,
+  formatTwoCardsText,
   getLastShownFounderId,
+  getLastShownFounderIds,
   getShownFounderIds,
   markShownAction,
   recordShown,
   runMatching,
+  shouldShowTwo,
 } from "../matching/pipeline.js";
 import { applyDelta, extractRefinement } from "../matching/refinement.js";
 import { onTargetAccept, onTargetDecline, propose } from "../consent/machine.js";
@@ -78,6 +81,90 @@ export async function dispatchInbound(msg: WatiInbound, deps: DispatchDeps): Pro
   }
 
   const conv = await getOrCreateConversation(founder.id);
+  const sql = getSql();
+
+  // Serialize per-conversation dispatch. WATI retries a message with a NEW
+  // wati_message_id when our function is slow (observed: same WhatsApp turn
+  // delivered 6x within seconds, producing duplicate candidate cards). A
+  // row in `dispatch_locks` is the lease; siblings see the fresh lease and
+  // no-op. Lease is auto-released in a finally block; a 30s TTL handles the
+  // case where the function is killed mid-flight on Vercel.
+  const lockHolder = msg.id;
+  const lockAcquired = await acquireDispatchLock(sql, conv.id, lockHolder);
+  if (!lockAcquired) {
+    logger.info(
+      { convId: conv.id, watiMessageId: msg.id },
+      "sibling dispatcher holds the lock — no-op",
+    );
+    return;
+  }
+
+  try {
+    await dispatchLocked(msg, deps, founder, conv, sql);
+  } finally {
+    await releaseDispatchLock(sql, conv.id, lockHolder);
+  }
+}
+
+async function acquireDispatchLock(
+  sql: ReturnType<typeof getSql>,
+  conversationId: string,
+  holder: string,
+): Promise<boolean> {
+  // Atomic: insert if absent, OR take over a stale lease (>30s old).
+  const rows = await sql<Array<{ conversation_id: string }>>`
+    INSERT INTO dispatch_locks (conversation_id, held_by, acquired_at)
+    VALUES (${conversationId}, ${holder}, now())
+    ON CONFLICT (conversation_id) DO UPDATE
+      SET held_by = EXCLUDED.held_by,
+          acquired_at = EXCLUDED.acquired_at
+      WHERE dispatch_locks.acquired_at < now() - interval '30 seconds'
+    RETURNING conversation_id
+  `;
+  return rows.length > 0;
+}
+
+async function releaseDispatchLock(
+  sql: ReturnType<typeof getSql>,
+  conversationId: string,
+  holder: string,
+): Promise<void> {
+  try {
+    await sql`
+      DELETE FROM dispatch_locks
+      WHERE conversation_id = ${conversationId} AND held_by = ${holder}
+    `;
+  } catch (err) {
+    // Non-fatal: the 30s TTL on acquire guarantees progress even if release fails.
+    logger.warn({ err, conversationId }, "dispatch lock release failed (non-fatal)");
+  }
+}
+
+async function dispatchLocked(
+  msg: WatiInbound,
+  deps: DispatchDeps,
+  founder: Founder,
+  conv: { id: string; founderId: string },
+  sql: ReturnType<typeof getSql>,
+): Promise<void> {
+  // Soft idempotency on top of the lock: if the exact same inbound text
+  // landed on this conversation within the last 15s, it's a retry — no-op.
+  const recentSameText = await sql<Array<{ id: string }>>`
+    SELECT id FROM turns
+    WHERE conversation_id = ${conv.id}
+      AND direction = 'in'
+      AND text = ${msg.text ?? msg.buttonPayload ?? "(interactive)"}
+      AND created_at > now() - interval '15 seconds'
+    LIMIT 1
+  `;
+  if (recentSameText.length > 0) {
+    logger.info(
+      { convId: conv.id, watiMessageId: msg.id },
+      "duplicate inbound text within 15s — no-op",
+    );
+    return;
+  }
+
   const state = await getSearchState(conv.id);
   const recent = await getRecentTurns(conv.id);
   const searchActive = Boolean(
@@ -89,7 +176,7 @@ export async function dispatchInbound(msg: WatiInbound, deps: DispatchDeps): Pro
       state.mustHave.length,
   );
 
-  const { intent, confidence } = await classifyIntent({
+  const { intent, confidence, pick } = await classifyIntent({
     text: msg.text,
     buttonPayload: msg.buttonPayload,
     searchActive,
@@ -117,6 +204,7 @@ export async function dispatchInbound(msg: WatiInbound, deps: DispatchDeps): Pro
     deps,
     userTurn: msg.text ?? "",
     recent,
+    ...(pick ? { pick } : {}),
   };
 
   try {
@@ -141,6 +229,8 @@ interface Ctx {
   deps: DispatchDeps;
   userTurn: string;
   recent: Array<{ direction: "in" | "out"; text: string }>;
+  /** 1-based position the user picked when two cards were shown. */
+  pick?: 1 | 2;
 }
 
 async function route(ctx: Ctx): Promise<void> {
@@ -159,6 +249,8 @@ async function route(ctx: Ctx): Promise<void> {
     case "decline":   return onDecline(ctx);
     case "stop":      return onStop(ctx);
     case "off_topic": return onOffTopic(ctx);
+    case "topic_switch": return onTopicSwitch(ctx);
+    case "force_intro": return onForceIntro(ctx);
     case "other":
     default:          return onClarify(ctx);
   }
@@ -191,6 +283,21 @@ async function onRefine(ctx: Ctx): Promise<void> {
 }
 
 async function onAccept(ctx: Ctx): Promise<void> {
+  return proposeFromLastShown(ctx, { forced: false });
+}
+
+/**
+ * User tapped *Force intro* (or typed it) on a `hold` card. Same flow as
+ * accept but the candidates_shown row gets action="forced" for auditing.
+ */
+async function onForceIntro(ctx: Ctx): Promise<void> {
+  return proposeFromLastShown(ctx, { forced: true });
+}
+
+async function proposeFromLastShown(
+  ctx: Ctx,
+  opts: { forced: boolean },
+): Promise<void> {
   const sql = getSql();
   const pending = await sql<Array<{ id: string }>>`
     SELECT id FROM match_requests
@@ -204,7 +311,10 @@ async function onAccept(ctx: Ctx): Promise<void> {
     return;
   }
 
-  const targetId = await getLastShownFounderId(ctx.conv.id);
+  // Resolve target: when two cards were shown, `ctx.pick` picks among them.
+  const recent = await getLastShownFounderIds(ctx.conv.id, 2);
+  const position = ctx.pick ?? 1;
+  const targetId = recent[position - 1] ?? recent[0] ?? null;
   if (!targetId) {
     const text = await composeReply({
       situation: "nothing_to_accept",
@@ -215,7 +325,17 @@ async function onAccept(ctx: Ctx): Promise<void> {
     await sendText(ctx, text, "nothing-to-accept");
     return;
   }
-  await markShownAction(ctx.conv.id, targetId, "accepted");
+  if (opts.forced) {
+    await sql`
+      UPDATE candidates_shown
+      SET action = 'forced'
+      WHERE conversation_id = ${ctx.conv.id}
+        AND founder_id = ${targetId}
+        AND action = 'shown'
+    `;
+  } else {
+    await markShownAction(ctx.conv.id, targetId, "accepted");
+  }
 
   const [shownRow] = await sql<Array<{ rationale: string }>>`
     SELECT rationale FROM candidates_shown
@@ -327,6 +447,22 @@ async function onOffTopic(ctx: Ctx): Promise<void> {
   await sendText(ctx, text, "off-topic");
 }
 
+/**
+ * The user asked for a service we don't offer (investors, legal, etc).
+ * Honest one-liner + offer to pause or switch the cofounder ask.
+ * Deliberately does NOT touch search_state — if they say "keep going" next,
+ * their context is preserved.
+ */
+async function onTopicSwitch(ctx: Ctx): Promise<void> {
+  const text = await composeReply({
+    situation: "topic_switch",
+    founderFirstName: firstName(ctx.founder),
+    recentTurns: ctx.recent,
+    userTurn: ctx.userTurn,
+  });
+  await sendText(ctx, text, "topic-switch");
+}
+
 async function onClarify(ctx: Ctx): Promise<void> {
   const text = await composeReply({
     situation: "clarify",
@@ -360,14 +496,50 @@ async function runAndReply(
     return;
   }
 
-  await recordShown(ctx.conv.id, [cards[0]!]);
-  const body = formatCardText(cards[0]!, 0, 1);
+  // Two-card render: both cards are warm and runner-up is within 60% of top.
+  if (shouldShowTwo(cards)) {
+    const pair: [typeof cards[0], typeof cards[0]] = [cards[0]!, cards[1]!];
+    const recorded = await recordShown(ctx.conv.id, pair);
+    if (!recorded) {
+      logger.warn(
+        { convId: ctx.conv.id },
+        "duplicate candidate race on two-card send — dropping",
+      );
+      return;
+    }
+    const body = formatTwoCardsText(pair);
+    // Typed 1/2/Skip replies only — WATI caps at 3 buttons and we need all
+    // three choices to read cleanly. See spec B1 rollout notes.
+    await ctx.deps.wati.sendText({ waId: ctx.founder.phone, text: body });
+    await insertOutboundTurn({ conversationId: ctx.conv.id, text: body, intent: "candidates-2" });
+    return;
+  }
+
+  // Single-card render (warm or hold).
+  const top = cards[0]!;
+  const recorded = await recordShown(ctx.conv.id, [top]);
+  if (!recorded) {
+    logger.warn(
+      { convId: ctx.conv.id, founderId: top.founder_id },
+      "duplicate candidate race — dropping send",
+    );
+    return;
+  }
+  const body = formatCardText(top);
+  const buttons =
+    top.intro_recommendation === "hold"
+      ? [{ text: "Force intro" }, { text: "Skip" }]
+      : [{ text: "Accept" }, { text: "Skip" }];
   await ctx.deps.wati.sendButtons({
     waId: ctx.founder.phone,
     body,
-    buttons: [{ text: "Accept" }, { text: "Skip" }],
+    buttons,
   });
-  await insertOutboundTurn({ conversationId: ctx.conv.id, text: body, intent: "candidate" });
+  await insertOutboundTurn({
+    conversationId: ctx.conv.id,
+    text: body,
+    intent: top.intro_recommendation === "hold" ? "candidate-hold" : "candidate",
+  });
 }
 
 async function sendText(ctx: Ctx, text: string, intent: string): Promise<void> {

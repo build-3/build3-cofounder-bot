@@ -13,7 +13,7 @@ export const WatiInboundSchema = z
     type: z.string().optional(),                  // 'text' | 'button' | 'interactive' | ...
     buttonPayload: z.string().optional(),
     interactive: z.unknown().optional(),
-    timestamp: z.number().int().optional(),
+    timestamp: z.union([z.number().int(), z.string()]).optional().transform((v) => v === undefined ? undefined : Number(v)),
   })
   .passthrough();
 

@@ -1,5 +1,6 @@
 import { loadConfig } from "../lib/config.js";
 import { logger } from "../lib/logger.js";
+import { assertOutboundAllowed, RateLimitExceededError } from "./rate-limit.js";
 import type { SendButtonsArgs, SendTemplateArgs, SendTextArgs } from "./types.js";
 
 /**
@@ -42,16 +43,34 @@ async function withRetry(fn: () => Promise<Response>, label: string): Promise<Re
 
 export function createWatiClient(): WatiClient {
   const cfg = loadConfig();
+  const token = cfg.WATI_API_TOKEN.startsWith("Bearer ")
+    ? cfg.WATI_API_TOKEN
+    : `Bearer ${cfg.WATI_API_TOKEN}`;
   const headers = {
-    Authorization: `Bearer ${cfg.WATI_API_TOKEN}`,
+    Authorization: token,
     "Content-Type": "application/json",
   };
 
+  function guard(waId: string, label: string): boolean {
+    if (cfg.KILL_SWITCH) {
+      logger.warn({ waId, label }, "KILL_SWITCH active — dropping outbound");
+      return false;
+    }
+    try {
+      assertOutboundAllowed(waId);
+      return true;
+    } catch (err) {
+      if (err instanceof RateLimitExceededError) return false;
+      throw err;
+    }
+  }
+
   return {
     async sendText({ waId, text }) {
-      const url = `${cfg.WATI_API_BASE_URL}/api/v1/sendSessionMessage/${encodeURIComponent(waId)}`;
+      if (!guard(waId, "sendText")) return;
+      const url = `${cfg.WATI_API_BASE_URL}/api/v1/sendSessionMessage/${encodeURIComponent(waId)}?messageText=${encodeURIComponent(text)}`;
       await withRetry(
-        () => fetch(url, { method: "POST", headers, body: JSON.stringify({ messageText: text }) }),
+        () => fetch(url, { method: "POST", headers }),
         "WATI.sendText",
       );
     },
@@ -60,14 +79,17 @@ export function createWatiClient(): WatiClient {
       if (buttons.length === 0 || buttons.length > 3) {
         throw new Error(`WATI allows 1–3 interactive buttons; got ${buttons.length}`);
       }
-      const url = `${cfg.WATI_API_BASE_URL}/api/v2/sendInteractiveButtonsMessage?whatsappNumber=${encodeURIComponent(waId)}`;
+      if (!guard(waId, "sendButtons")) return;
+      const url = `${cfg.WATI_API_BASE_URL}/api/v1/sendInteractiveButtonsMessage?whatsappNumber=${encodeURIComponent(waId)}`;
       await withRetry(
         () =>
           fetch(url, {
             method: "POST",
             headers,
             body: JSON.stringify({
+              header: { type: "Text", text: "Match" },
               body,
+              footer: "",
               buttons: buttons.map((b) => ({ text: b.text })),
             }),
           }),
@@ -76,6 +98,7 @@ export function createWatiClient(): WatiClient {
     },
 
     async sendTemplate({ waId, templateName, parameters }) {
+      if (!guard(waId, "sendTemplate")) return;
       const url = `${cfg.WATI_API_BASE_URL}/api/v1/sendTemplateMessage?whatsappNumber=${encodeURIComponent(waId)}`;
       await withRetry(
         () =>
