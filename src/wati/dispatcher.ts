@@ -255,18 +255,35 @@ async function route(ctx: Ctx): Promise<void> {
 }
 
 async function onGreeting(ctx: Ctx): Promise<void> {
-  // A greeting is a human hello — respond like a human would, not by
-  // slapping a profile down. When a search is active, the greeting prompt
-  // naturally picks up the thread ("hey — still on that sales search?").
-  // The user's NEXT message (yes / keep going / a refinement) routes via
-  // the affirmation or refine shortcut and THAT sends the card.
+  // Hand Gemini the recent turns + current search state + founder name and
+  // let it decide what to say. No scripted scaffolding — it picks whether
+  // to reintroduce, pick up the thread, or just riff given the context.
+  const state = await getSearchState(ctx.conv.id);
   const text = await composeReply({
     situation: "greeting",
     founderFirstName: firstName(ctx.founder),
     recentTurns: ctx.recent,
     userTurn: ctx.userTurn,
+    data: searchStateToContext(state),
   });
   await sendText(ctx, text, "greeting");
+}
+
+/** Flatten the current search state into a string map Gemini can read. */
+function searchStateToContext(
+  state: Awaited<ReturnType<typeof getSearchState>>,
+): Record<string, string | undefined> {
+  const pick = (arr: string[]) => (arr.length ? arr.join(", ") : undefined);
+  return {
+    role_they_want: state.role ?? undefined,
+    sector: pick(state.sector),
+    stage: pick(state.stage),
+    location: pick(state.location),
+    seniority: state.seniority ?? undefined,
+    must_have: pick(state.mustHave),
+    nice_to_have: pick(state.niceToHave),
+    anti_prefs: pick(state.antiPrefs),
+  };
 }
 
 async function onDiscover(ctx: Ctx): Promise<void> {
@@ -441,11 +458,13 @@ async function onStop(ctx: Ctx): Promise<void> {
 }
 
 async function onOffTopic(ctx: Ctx): Promise<void> {
+  const state = await getSearchState(ctx.conv.id);
   const text = await composeReply({
     situation: "off_topic",
     founderFirstName: firstName(ctx.founder),
     recentTurns: ctx.recent,
     userTurn: ctx.userTurn,
+    data: searchStateToContext(state),
   });
   await sendText(ctx, text, "off-topic");
 }
@@ -467,11 +486,13 @@ async function onTopicSwitch(ctx: Ctx): Promise<void> {
 }
 
 async function onClarify(ctx: Ctx): Promise<void> {
+  const state = await getSearchState(ctx.conv.id);
   const text = await composeReply({
     situation: "clarify",
     founderFirstName: firstName(ctx.founder),
     recentTurns: ctx.recent,
     userTurn: ctx.userTurn,
+    data: searchStateToContext(state),
   });
   await sendText(ctx, text, "clarify");
 }
