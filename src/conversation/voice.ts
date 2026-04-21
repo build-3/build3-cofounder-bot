@@ -30,6 +30,7 @@ export type VoiceIntent =
   | "decline"
   | "stop"
   | "off_topic"
+  | "topic_switch"
   | "other";
 
 const IntentSchema = z.object({
@@ -42,10 +43,15 @@ const IntentSchema = z.object({
     "decline",
     "stop",
     "off_topic",
+    "topic_switch",
     "other",
   ]),
   confidence: z.number().min(0).max(1),
 });
+
+/** Under this confidence, `topic_switch` falls back to `clarify` so a
+ * hallucinated switch can't nuke an active cofounder search. */
+const TOPIC_SWITCH_CONFIDENCE_FLOOR = 0.7;
 
 export async function classifyIntent(input: {
   text?: string | undefined;
@@ -71,10 +77,15 @@ export async function classifyIntent(input: {
     const parsed = await getLLM().json({
       system: INTENT_SYSTEM,
       user: buildIntentUser(input),
-      schemaName: "voice_intent_v1",
+      schemaName: "voice_intent_v2",
       temperature: 0,
       parse: (raw) => IntentSchema.parse(JSON.parse(raw)),
     });
+    // Confidence gate: a low-confidence topic_switch demotes to "other" so
+    // the router asks a clarifying question instead of derailing the search.
+    if (parsed.intent === "topic_switch" && parsed.confidence < TOPIC_SWITCH_CONFIDENCE_FLOOR) {
+      return { intent: "other", confidence: parsed.confidence };
+    }
     return parsed;
   } catch (err) {
     logger.warn({ err }, "intent LLM failed — falling back to heuristic");
@@ -88,6 +99,18 @@ function heuristicIntent(text: string, searchActive: boolean): { intent: VoiceIn
     return { intent: "skip", confidence: 0.85 };
   }
   if (/\b(stop|unsubscribe|leave me alone|quit|don'?t message)\b/i.test(text)) return { intent: "stop", confidence: 0.8 };
+  // Topic-switch heuristic: the user is asking the bot to do something
+  // we don't do. Requires an explicit ask verb + an off-scope target. We
+  // only fire when "cofounder" is absent, to avoid stealing a refine like
+  // "find me a cofounder who's done fundraising."
+  if (
+    !/\b(co-?founder|partner)\b/i.test(text) &&
+    /\b(find|get|connect|intro|introduce)\b.*\b(investor|investors|vc|vcs|lawyer|legal|customer|customers|cold email|fundrais|hire|recruit)/i.test(
+      text,
+    )
+  ) {
+    return { intent: "topic_switch", confidence: 0.75 };
+  }
   if (/\b(find|looking for|need|want|match me|get me)\b/i.test(text)) {
     return { intent: "discover", confidence: 0.7 };
   }
@@ -139,6 +162,7 @@ function minimalFallback(s: Situation, firstName: string): string {
     case "error_generic":  return "Hit a snag on my side — try again in a moment.";
     case "clarify":        return "Could you say a bit more about who you're looking for?";
     case "nothing_to_accept": return "Nothing to accept yet — tell me who you're looking for first.";
+    case "topic_switch":   return "I only do cofounder matching — not investors or other intros. Want me to pause your search, or keep going with a different cofounder ask?";
   }
 }
 

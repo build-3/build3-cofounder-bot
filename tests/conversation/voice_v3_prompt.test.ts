@@ -49,4 +49,12 @@ describe("voice_v3 prompt shape", () => {
     expect(user).toContain("SITUATION: skip_ack");
     expect(user).toMatch(/short natural ack after a skip/i);
   });
+
+  it("topic_switch guidance is honest about scope and offers a pause/redirect", () => {
+    const user = buildVoiceUser(makeCtx({ situation: "topic_switch" }));
+    expect(user).toContain("SITUATION: topic_switch");
+    expect(user).toMatch(/only do cofounder matching/i);
+    expect(user).toMatch(/pause|redirect|different cofounder ask/i);
+    expect(user).toMatch(/do not pretend/i);
+  });
 });

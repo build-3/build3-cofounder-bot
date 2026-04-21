@@ -243,6 +243,7 @@ async function route(ctx: Ctx): Promise<void> {
     case "decline":   return onDecline(ctx);
     case "stop":      return onStop(ctx);
     case "off_topic": return onOffTopic(ctx);
+    case "topic_switch": return onTopicSwitch(ctx);
     case "other":
     default:          return onClarify(ctx);
   }
@@ -409,6 +410,22 @@ async function onOffTopic(ctx: Ctx): Promise<void> {
     userTurn: ctx.userTurn,
   });
   await sendText(ctx, text, "off-topic");
+}
+
+/**
+ * The user asked for a service we don't offer (investors, legal, etc).
+ * Honest one-liner + offer to pause or switch the cofounder ask.
+ * Deliberately does NOT touch search_state — if they say "keep going" next,
+ * their context is preserved.
+ */
+async function onTopicSwitch(ctx: Ctx): Promise<void> {
+  const text = await composeReply({
+    situation: "topic_switch",
+    founderFirstName: firstName(ctx.founder),
+    recentTurns: ctx.recent,
+    userTurn: ctx.userTurn,
+  });
+  await sendText(ctx, text, "topic-switch");
 }
 
 async function onClarify(ctx: Ctx): Promise<void> {

@@ -15,15 +15,82 @@
  *   from v2 so the voice layer can keep a single import.
  */
 
-import {
-  buildIntentUser,
-  INTENT_SYSTEM,
-  type Situation,
-  type VoiceContext,
-} from "./voice_v2.js";
+import { buildIntentUser } from "./voice_v2.js";
 
-export { buildIntentUser, INTENT_SYSTEM };
-export type { Situation, VoiceContext };
+export { buildIntentUser };
+
+export interface VoiceContext {
+  situation: Situation;
+  founderFirstName: string;
+  recentTurns: Array<{ direction: "in" | "out"; text: string }>;
+  data?: Record<string, string | number | undefined>;
+  userTurn?: string;
+}
+
+/**
+ * v3 Situation union — adds `topic_switch` (user asks for a service we don't
+ * offer, e.g. "find me investors"). Kept locally in v3 rather than edited
+ * into v2 so the older prompt stays frozen for diff-testing.
+ */
+export type Situation =
+  | "greeting"
+  | "discover_ack"
+  | "skip_ack"
+  | "refine_ack"
+  | "accept_confirm"
+  | "decline_soft_notice"
+  | "expiry_soft_notice"
+  | "no_matches"
+  | "off_topic"
+  | "stop_ack"
+  | "non_cohort"
+  | "opted_out"
+  | "error_generic"
+  | "clarify"
+  | "nothing_to_accept"
+  | "topic_switch";
+
+/**
+ * v3 INTENT_SYSTEM — adds `topic_switch` to the intent enum. A topic switch
+ * is specifically: the user wants a *service* we don't offer (investors,
+ * legal, cold emails, fundraising help). Weather / small talk stays
+ * `off_topic`. A rephrasing of the cofounder ask stays `refine` or
+ * `discover`.
+ */
+export const INTENT_SYSTEM = `
+You classify a founder's WhatsApp message into one routing intent for a
+cofounder-matching bot.
+
+Return strict JSON: { "intent": <one value below>, "confidence": <0..1> }
+
+INTENTS
+- "greeting"      : hi/hey/start/opening messages with no real ask yet
+- "discover"      : a fresh search request for a cofounder
+- "refine"        : adjustment of an existing cofounder search
+- "accept"        : accept/introduction intent
+- "skip"          : skip/next/pass intent
+- "decline"       : decline/no thanks intent
+- "stop"          : stop/unsubscribe/leave me alone
+- "topic_switch"  : user wants a different service we do not offer
+                    (investors, legal, cold-email help, fundraising advice,
+                    customer intros, hiring). They are NOT looking for a
+                    cofounder.
+- "off_topic"     : unrelated small talk (weather, news, jokes)
+- "other"         : unclear fallback
+
+RULES
+- Button payloads ACCEPT/SKIP/DECLINE are authoritative.
+- Typed "next", "another one", "show me someone else", and "pass" mean "skip".
+- If the user restarts with a fresh cofounder ask, label it "discover" even
+  in an active conversation.
+- "actually find me investors" / "can you help with legal" / "find me
+  customers" → topic_switch, not refine. They switched what they want the
+  bot to do.
+- Confidence under 0.7 on topic_switch should be treated as "clarify" by
+  the caller — so only return high confidence when you're sure the user
+  wants a non-cofounder service.
+- Confidence under 0.6 means the bot should ask one clarifying question.
+`.trim();
 
 export const VOICE_SYSTEM = `
 You are the Build3 Cofounder Bot. You help founders in a small private cohort
@@ -130,5 +197,13 @@ function situationGuidance(s: Situation): string {
       return "Ask one crisp follow-up question that helps you match better.";
     case "nothing_to_accept":
       return "Say there's nothing active to accept and ask who they're looking for.";
+    case "topic_switch":
+      return [
+        "The user asked for a service you don't offer (investors, legal,",
+        "cold emails, etc). One honest line saying you only do cofounder",
+        "matching. Then one question: do they want to pause the cofounder",
+        "search, or keep going with a different cofounder ask? Do not",
+        "pretend you can help with the other thing.",
+      ].join(" ");
   }
 }
