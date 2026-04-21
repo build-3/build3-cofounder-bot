@@ -31,7 +31,17 @@ export type VoiceIntent =
   | "stop"
   | "off_topic"
   | "topic_switch"
+  | "force_intro"
   | "other";
+
+/** Returned by classifyIntent. For "accept", `pick` is the 1-based position
+ *  the user referenced when we showed two candidates (1 or 2). Absent for
+ *  single-card flows; defaults to 1 at the call site. */
+export interface ClassifiedIntent {
+  intent: VoiceIntent;
+  confidence: number;
+  pick?: 1 | 2;
+}
 
 const IntentSchema = z.object({
   intent: z.enum([
@@ -44,6 +54,7 @@ const IntentSchema = z.object({
     "stop",
     "off_topic",
     "topic_switch",
+    "force_intro",
     "other",
   ]),
   confidence: z.number().min(0).max(1),
@@ -58,12 +69,13 @@ export async function classifyIntent(input: {
   buttonPayload?: string | undefined;
   searchActive: boolean;
   recentTurns: Array<{ direction: "in" | "out"; text: string }>;
-}): Promise<{ intent: VoiceIntent; confidence: number }> {
+}): Promise<ClassifiedIntent> {
   // Button payloads are authoritative — skip the LLM round-trip.
   const payload = input.buttonPayload?.toUpperCase();
   if (payload === "ACCEPT") return { intent: "accept", confidence: 1 };
   if (payload === "SKIP") return { intent: "skip", confidence: 1 };
   if (payload === "DECLINE") return { intent: "decline", confidence: 1 };
+  if (payload === "FORCE_INTRO") return { intent: "force_intro", confidence: 1 };
 
   const text = input.text?.trim() ?? "";
   if (!text && !payload) return { intent: "other", confidence: 0 };
@@ -72,6 +84,17 @@ export async function classifyIntent(input: {
   if (/^\s*accept\s*$/i.test(text)) return { intent: "accept", confidence: 1 };
   if (/^\s*skip\s*$/i.test(text)) return { intent: "skip", confidence: 1 };
   if (/^\s*decline\s*$/i.test(text)) return { intent: "decline", confidence: 1 };
+  if (/^\s*(force\s*intro|intro anyway|reach out anyway|i'll take it)\s*$/i.test(text)) {
+    return { intent: "force_intro", confidence: 0.95 };
+  }
+
+  // Numbered picks from the two-card render: "1", "2", "pick 1", "go with 2".
+  // Deterministic-first per CLAUDE.md rule #6.
+  const pickMatch = text.match(/^\s*(?:pick\s+|go\s+with\s+|option\s+|choose\s+)?([12])\s*$/i);
+  if (pickMatch) {
+    const n = Number(pickMatch[1]) as 1 | 2;
+    return { intent: "accept", confidence: 0.95, pick: n };
+  }
 
   try {
     const parsed = await getLLM().json({

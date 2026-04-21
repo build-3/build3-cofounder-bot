@@ -15,11 +15,14 @@ import {
 } from "../conversation/voice.js";
 import {
   formatCardText,
+  formatTwoCardsText,
   getLastShownFounderId,
+  getLastShownFounderIds,
   getShownFounderIds,
   markShownAction,
   recordShown,
   runMatching,
+  shouldShowTwo,
 } from "../matching/pipeline.js";
 import { applyDelta, extractRefinement } from "../matching/refinement.js";
 import { onTargetAccept, onTargetDecline, propose } from "../consent/machine.js";
@@ -173,7 +176,7 @@ async function dispatchLocked(
       state.mustHave.length,
   );
 
-  const { intent, confidence } = await classifyIntent({
+  const { intent, confidence, pick } = await classifyIntent({
     text: msg.text,
     buttonPayload: msg.buttonPayload,
     searchActive,
@@ -201,6 +204,7 @@ async function dispatchLocked(
     deps,
     userTurn: msg.text ?? "",
     recent,
+    ...(pick ? { pick } : {}),
   };
 
   try {
@@ -225,6 +229,8 @@ interface Ctx {
   deps: DispatchDeps;
   userTurn: string;
   recent: Array<{ direction: "in" | "out"; text: string }>;
+  /** 1-based position the user picked when two cards were shown. */
+  pick?: 1 | 2;
 }
 
 async function route(ctx: Ctx): Promise<void> {
@@ -244,6 +250,7 @@ async function route(ctx: Ctx): Promise<void> {
     case "stop":      return onStop(ctx);
     case "off_topic": return onOffTopic(ctx);
     case "topic_switch": return onTopicSwitch(ctx);
+    case "force_intro": return onForceIntro(ctx);
     case "other":
     default:          return onClarify(ctx);
   }
@@ -276,6 +283,21 @@ async function onRefine(ctx: Ctx): Promise<void> {
 }
 
 async function onAccept(ctx: Ctx): Promise<void> {
+  return proposeFromLastShown(ctx, { forced: false });
+}
+
+/**
+ * User tapped *Force intro* (or typed it) on a `hold` card. Same flow as
+ * accept but the candidates_shown row gets action="forced" for auditing.
+ */
+async function onForceIntro(ctx: Ctx): Promise<void> {
+  return proposeFromLastShown(ctx, { forced: true });
+}
+
+async function proposeFromLastShown(
+  ctx: Ctx,
+  opts: { forced: boolean },
+): Promise<void> {
   const sql = getSql();
   const pending = await sql<Array<{ id: string }>>`
     SELECT id FROM match_requests
@@ -289,7 +311,10 @@ async function onAccept(ctx: Ctx): Promise<void> {
     return;
   }
 
-  const targetId = await getLastShownFounderId(ctx.conv.id);
+  // Resolve target: when two cards were shown, `ctx.pick` picks among them.
+  const recent = await getLastShownFounderIds(ctx.conv.id, 2);
+  const position = ctx.pick ?? 1;
+  const targetId = recent[position - 1] ?? recent[0] ?? null;
   if (!targetId) {
     const text = await composeReply({
       situation: "nothing_to_accept",
@@ -300,7 +325,17 @@ async function onAccept(ctx: Ctx): Promise<void> {
     await sendText(ctx, text, "nothing-to-accept");
     return;
   }
-  await markShownAction(ctx.conv.id, targetId, "accepted");
+  if (opts.forced) {
+    await sql`
+      UPDATE candidates_shown
+      SET action = 'forced'
+      WHERE conversation_id = ${ctx.conv.id}
+        AND founder_id = ${targetId}
+        AND action = 'shown'
+    `;
+  } else {
+    await markShownAction(ctx.conv.id, targetId, "accepted");
+  }
 
   const [shownRow] = await sql<Array<{ rationale: string }>>`
     SELECT rationale FROM candidates_shown
@@ -461,23 +496,50 @@ async function runAndReply(
     return;
   }
 
-  const recorded = await recordShown(ctx.conv.id, [cards[0]!]);
+  // Two-card render: both cards are warm and runner-up is within 60% of top.
+  if (shouldShowTwo(cards)) {
+    const pair: [typeof cards[0], typeof cards[0]] = [cards[0]!, cards[1]!];
+    const recorded = await recordShown(ctx.conv.id, pair);
+    if (!recorded) {
+      logger.warn(
+        { convId: ctx.conv.id },
+        "duplicate candidate race on two-card send — dropping",
+      );
+      return;
+    }
+    const body = formatTwoCardsText(pair);
+    // Typed 1/2/Skip replies only — WATI caps at 3 buttons and we need all
+    // three choices to read cleanly. See spec B1 rollout notes.
+    await ctx.deps.wati.sendText({ waId: ctx.founder.phone, text: body });
+    await insertOutboundTurn({ conversationId: ctx.conv.id, text: body, intent: "candidates-2" });
+    return;
+  }
+
+  // Single-card render (warm or hold).
+  const top = cards[0]!;
+  const recorded = await recordShown(ctx.conv.id, [top]);
   if (!recorded) {
-    // A concurrent dispatcher already recorded this founder. Swallow silently
-    // — sending the card would duplicate. See 0002_concurrency_guards.sql.
     logger.warn(
-      { convId: ctx.conv.id, founderId: cards[0]!.founder_id },
+      { convId: ctx.conv.id, founderId: top.founder_id },
       "duplicate candidate race — dropping send",
     );
     return;
   }
-  const body = formatCardText(cards[0]!);
+  const body = formatCardText(top);
+  const buttons =
+    top.intro_recommendation === "hold"
+      ? [{ text: "Force intro" }, { text: "Skip" }]
+      : [{ text: "Accept" }, { text: "Skip" }];
   await ctx.deps.wati.sendButtons({
     waId: ctx.founder.phone,
     body,
-    buttons: [{ text: "Accept" }, { text: "Skip" }],
+    buttons,
   });
-  await insertOutboundTurn({ conversationId: ctx.conv.id, text: body, intent: "candidate" });
+  await insertOutboundTurn({
+    conversationId: ctx.conv.id,
+    text: body,
+    intent: top.intro_recommendation === "hold" ? "candidate-hold" : "candidate",
+  });
 }
 
 async function sendText(ctx: Ctx, text: string, intent: string): Promise<void> {

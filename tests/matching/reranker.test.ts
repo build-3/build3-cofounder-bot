@@ -137,6 +137,71 @@ describe("rerank (v3 schema)", () => {
     expect(ranked[0]!.bullets.length).toBeGreaterThan(0);
   });
 
+  it("parses a v4 'hold' response and surfaces the hold_reason", async () => {
+    const id = "55555555-5555-5555-5555-555555555555";
+    __setLLMForTests(
+      stubLLM({
+        ranked: [
+          {
+            founder_id: id,
+            score: 8,
+            rationale: "GTM operator with strong BD reps",
+            bullets: ["head of Growth + BD", "operator energy"],
+            drawback: "",
+            intro_recommendation: "hold",
+            hold_reason: "wants funded startups with real execution budget",
+          },
+        ],
+      }),
+    );
+
+    const ranked = await rerank([makeCandidate(id)], emptyState, "growth cofounder");
+    expect(ranked).toHaveLength(1);
+    expect(ranked[0]!.intro_recommendation).toBe("hold");
+    expect(ranked[0]!.hold_reason).toMatch(/funded startups/);
+  });
+
+  it("defaults intro_recommendation to 'warm' for a v3-shaped (no recommendation) response", async () => {
+    const id = "66666666-6666-6666-6666-666666666666";
+    __setLLMForTests(
+      stubLLM({
+        ranked: [
+          {
+            founder_id: id,
+            score: 9,
+            rationale: "Strong fit",
+            bullets: ["b"],
+            drawback: "",
+          },
+        ],
+      }),
+    );
+    const ranked = await rerank([makeCandidate(id)], emptyState, "growth cofounder");
+    expect(ranked[0]!.intro_recommendation).toBe("warm");
+    expect(ranked[0]!.hold_reason).toBe("");
+  });
+
+  it("drops hold_reason when intro_recommendation is warm (even if the model sent one)", async () => {
+    const id = "77777777-7777-7777-7777-777777777777";
+    __setLLMForTests(
+      stubLLM({
+        ranked: [
+          {
+            founder_id: id,
+            score: 9,
+            rationale: "Strong fit",
+            bullets: ["b"],
+            drawback: "",
+            intro_recommendation: "warm",
+            hold_reason: "this should be dropped",
+          },
+        ],
+      }),
+    );
+    const ranked = await rerank([makeCandidate(id)], emptyState, "growth cofounder");
+    expect(ranked[0]!.hold_reason).toBe("");
+  });
+
   it("drops hallucinated founder_ids the reranker invented", async () => {
     const realId = "44444444-4444-4444-4444-444444444444";
     const hallucinated = "99999999-9999-9999-9999-999999999999";

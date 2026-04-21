@@ -5,7 +5,7 @@ import {
   buildRerankUserPrompt,
   RERANK_SYSTEM,
   type RerankCandidate,
-} from "../llm/prompts/rerank_v3.js";
+} from "../llm/prompts/rerank_v4.js";
 import type { SearchStateRow } from "../conversation/store.js";
 import type { RetrievedCandidate } from "./retriever.js";
 
@@ -19,6 +19,11 @@ const RerankOutputSchema = z.object({
       // bullets) still parses — the card will just fall back to rationale.
       bullets: z.array(z.string().max(200)).max(4).default([]),
       drawback: z.string().max(240).default(""),
+      // v4: hold/warm intro recommendation. Defaulted to "warm" so a v3-shaped
+      // response (no recommendation) still parses and renders as a normal
+      // warm card.
+      intro_recommendation: z.enum(["warm", "hold"]).default("warm"),
+      hold_reason: z.string().max(260).default(""),
       breakdown: z
         .object({
           role_fit: z.number(),
@@ -40,6 +45,10 @@ export interface RankedCandidate {
   rationale: string;
   bullets: string[];
   drawback: string;
+  /** "warm" = intro now; "hold" = good match but intro is premature. */
+  intro_recommendation: "warm" | "hold";
+  /** Required when intro_recommendation === "hold", else "". */
+  hold_reason: string;
 }
 
 const TOP_N_TO_RERANK = 8;
@@ -136,6 +145,8 @@ function cheapFallbackRank(
       rationale: humanRationale(candidate, state, userTurn),
       bullets: fallbackBullets(candidate),
       drawback: "",
+      intro_recommendation: "warm",
+      hold_reason: "",
     }));
 }
 
@@ -198,6 +209,13 @@ export async function rerank(
         .slice(0, 3)
         .map((b) => b.slice(0, 180)),
       drawback: (r.drawback ?? "").trim().slice(0, 240),
+      intro_recommendation: r.intro_recommendation ?? "warm",
+      // Enforce the schema rule: hold_reason is only meaningful when hold.
+      // If the model returned "warm" with a reason, drop it.
+      hold_reason:
+        r.intro_recommendation === "hold"
+          ? (r.hold_reason ?? "").trim().slice(0, 260)
+          : "",
     }));
   } catch (err) {
     logger.warn({ err }, "rerank fell back to retrieval order");

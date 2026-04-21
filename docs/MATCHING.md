@@ -105,11 +105,21 @@ Defined in `src/matching/weights.ts`. Weights are applied to the **query assembl
 All prompts live under `src/llm/prompts/<name>_v<n>.ts`. Never edit a shipped version in place — bump the version number and update `CLAUDE.md` if the change is semantically significant.
 
 Current versions:
-- `voice_v2.ts` — conversational surface + intent classification
+- `voice_v3.ts` — conversational surface + intent classification; adds `topic_switch` (Batch B3), `force_intro`, and numbered-pick deterministic parsing (Batch B1)
 - `refinement_v3.ts` — user turn → `RefinementDelta`
-- `rerank_v2.ts` — top 15 → top 3 with reciprocal-fit rubric
+- `rerank_v4.ts` — top 8 → top 3 with reciprocal-fit rubric + `intro_recommendation` (warm/hold) + `hold_reason` (Batch B2). Schema defaults make it backwards-compatible with v3 responses.
 - `explain_v1.ts` — 1-line rationale per card (used when rerank was skipped)
 - `intro_v1.ts` — mutual-accept intro message
+
+### Card rendering (post-Batch-B)
+
+`runAndReply` picks between three shapes depending on the reranker output:
+
+1. **Two cards, one outbound** — when two candidates come back warm and `score[1] >= 0.6 * score[0]`. Single `sendText` with a numbered body; typed `1` / `2` / `Skip` resolve deterministically via the classifier.
+2. **Single warm card** — default. `sendButtons` with `Accept` / `Skip`.
+3. **Single hold card** — when the top card is `intro_recommendation: "hold"`. Drawback slot becomes "Holding off on this intro: …"; `sendButtons` with `Force intro` / `Skip`. `onForceIntro` records `action = 'forced'` on `candidates_shown` so override rate is measurable.
+
+In all three shapes the dispatcher writes exactly one `turns` row and one `sendButtons`/`sendText` call — the one-outbound-per-inbound contract is preserved.
 
 ---
 

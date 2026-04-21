@@ -7,6 +7,7 @@ function makeCard(overrides: Partial<CandidateCard> = {}): CandidateCard {
     name: "Anuj Rathi",
     city: "Bangalore",
     headline: "Ex Swiggy / Cleartrip growth leader",
+    score: 9,
     rationale: "Strong GTM operator with matchmaking-product context",
     bullets: [
       "Ex Swiggy / Cleartrip growth leader, scaled marketplaces at real scale",
@@ -15,6 +16,8 @@ function makeCard(overrides: Partial<CandidateCard> = {}): CandidateCard {
     ],
     drawback:
       "He's hunting a technical cofounder himself and plans to raise fast, so this may turn into a notes-swap rather than him joining you",
+    intro_recommendation: "warm",
+    hold_reason: "",
     seniority: "founder-level",
     years_exp: 12,
     sector_tags: ["b2b-saas", "ai-infra"],
