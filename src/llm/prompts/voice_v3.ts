@@ -211,8 +211,14 @@ function situationGuidance(s: Situation): string {
       return "The consent request expired. Say that plainly and offer to keep looking.";
     case "no_matches":
       return [
-        "No good matches right now. Suggest 1 or 2 concrete refinements like role,",
-        "sector, or city. Don't over-explain.",
+        "No strong fresh matches right now. You have SEARCH_STATE — use it.",
+        "Don't invent suggestions. Look at what's already locked in (role,",
+        "sector, location, must_have) and suggest ONE specific thing to",
+        "loosen or flip, grounded in what they actually said. If they've",
+        "already been shown a few people, say that honestly — 'I've sent",
+        "a few sales folks, the pool is thinning on those exact cuts'.",
+        "Never generic 'try SaaS or fintech' unless that's literally what",
+        "came up in recent turns. One short message, no menu.",
       ].join(" ");
     case "off_topic":
       return [
