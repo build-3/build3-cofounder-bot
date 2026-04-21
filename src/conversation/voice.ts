@@ -96,6 +96,18 @@ export async function classifyIntent(input: {
     return { intent: "accept", confidence: 0.95, pick: n };
   }
 
+  // Deterministic discover/refine catch for obvious search phrasings. Stops
+  // Gemini from misclassifying "find me a sales founder" as a greeting.
+  // We only fire when the ask mentions a cofounder-role word AND NOT an
+  // off-scope service target (investor/lawyer/etc) — those go through the
+  // LLM / topic_switch heuristic instead.
+  const SEARCH_VERBS = /\b(find|looking for|need|want|match me|get me|show me|connect me|intro me)\b/i;
+  const ROLE_WORDS = /\b(co-?founder|founder|partner|sales|technical|tech|engineer|engineering|cto|product|pm|growth|marketing|gtm|bd|design|designer|ops|operations)\b/i;
+  const OFF_SCOPE = /\b(investor|investors|vc|vcs|lawyer|legal|customer|customers|cold email|fundrais|hire|recruit)\b/i;
+  if (SEARCH_VERBS.test(text) && ROLE_WORDS.test(text) && !OFF_SCOPE.test(text)) {
+    return { intent: input.searchActive ? "refine" : "discover", confidence: 0.9 };
+  }
+
   try {
     const parsed = await getLLM().json({
       system: INTENT_SYSTEM,

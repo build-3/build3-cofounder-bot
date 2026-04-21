@@ -32,8 +32,8 @@ describe("voice_v3 prompt shape", () => {
     // Beat 2 — sharpening question.
     expect(user).toMatch(/one crisp sharpening question/i);
     // Explicit bans.
-    expect(user).toMatch(/do NOT list role examples/i);
-    expect(user).toMatch(/do NOT say 'separated by commas'/i);
+    expect(user).toMatch(/never list role examples/i);
+    expect(user).toMatch(/never say 'separated by commas'/i);
   });
 
   it("non_cohort prompt asks for a warm single message with the Build3 escape hatch", () => {

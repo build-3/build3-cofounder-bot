@@ -483,6 +483,7 @@ async function runAndReply(
     state,
     userTurn: ctx.userTurn,
     alreadyShownFounderIds: shown,
+    recentTurns: ctx.recent,
   });
 
   if (cards.length === 0) {
