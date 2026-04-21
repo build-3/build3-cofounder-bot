@@ -23,17 +23,16 @@ describe("voice_v3 prompt shape", () => {
     // produce them. The assertions above are on the ban sentences.
   });
 
-  it("greeting prompt is the two-beat 'how I match / sharpening question' shape", () => {
+  it("greeting prompt hands Gemini context and lets it decide (no hard script)", () => {
     const user = buildVoiceUser(makeCtx({ situation: "greeting" }));
     expect(user).toContain("SITUATION: greeting");
-    // Beat 1 — how we match.
-    expect(user).toMatch(/complementary\s+skills/i);
-    expect(user).toMatch(/not keyword overlap/i);
-    // Beat 2 — sharpening question.
-    expect(user).toMatch(/one crisp sharpening question/i);
-    // Explicit bans.
-    expect(user).toMatch(/never list role examples/i);
-    expect(user).toMatch(/never say 'separated by commas'/i);
+    // Must point Gemini at the two sources of truth it reads.
+    expect(user).toMatch(/RECENT_TURNS/);
+    expect(user).toMatch(/SEARCH_STATE/);
+    // Form-filler bans still apply so the opener never turns into a menu.
+    expect(user).toMatch(/no role-word menus/i);
+    // Anti-repeat rule in the per-situation guidance.
+    expect(user).toMatch(/never ask a question the user already answered/i);
   });
 
   it("non_cohort prompt asks for a warm single message with the Build3 escape hatch", () => {
