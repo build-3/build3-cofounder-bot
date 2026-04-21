@@ -49,7 +49,7 @@ _Rolling status log. Update this at the end of every meaningful step._
 | 3 | WATI API token + base URL | ✅ resolved | Tenant 453532 (Build3-owned per ADR-009); creds in Keychain |
 | 4 | Public hostname + deploy | ✅ resolved (pending #2) | Vercel deploy working: `/healthz` → 200 in 0.35s. Framework set to `null`, using `@vercel/node` handler (`api/index.ts`). Pino-pretty removed from serverless bundle. Host: `https://build3-cofounder-bot.vercel.app`. Ready to paste webhook URL into WATI once #2 resolved. |
 | 5 | GitHub remote URL | ✅ resolved | `build-3/build3-cofounder-bot` (private Build3 org), all commits pushed to `main`, authorship `Arjun Thekkedan <heyarjunthekkedan@gmail.com>` |
-| 6 | Vercel token rotation | ⚠ pending | Token `vcp_6CHv301ZrfU2e9Kj0scKzPXZ5gVUIoT033xdxhi5mbM7nTDT6H2yaqOs` (name `hellobruh`) leaked in CLI "next" outputs. Must be rotated post-deploy. |
+| 6 | Vercel token rotation | ⚠ pending | A Vercel token (name `hellobruh`) leaked in CLI "next" outputs. The token value that used to live in this cell has been redacted from this file — but it is still present in earlier commits on this branch's history, so **rotate the token in the Vercel dashboard** as the fix. Redacting the file does NOT revoke the secret; only rotation does. |
 
 ## Handoff notes (read me if picking this up cold)
 
