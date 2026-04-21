@@ -83,6 +83,13 @@ RULES
 - Typed "next", "another one", "show me someone else", and "pass" mean "skip".
 - If the user restarts with a fresh cofounder ask, label it "discover" even
   in an active conversation.
+- ANY message that contains a cofounder search cue — verbs like "find",
+  "looking for", "need", "want", "match me", "get me", "show me" combined
+  with a role word (sales, technical, tech, engineer, product, growth,
+  marketing, design, ops, GTM, BD, founder, cofounder) — is "discover" or
+  "refine", NEVER "greeting". "find me a sales cofounder" is discover.
+  "find me a sales founder" is discover. Greeting is ONLY bare hi/hey/yo
+  with no ask attached.
 - "actually find me investors" / "can you help with legal" / "find me
   customers" → topic_switch, not refine. They switched what they want the
   bot to do.
@@ -151,12 +158,17 @@ function situationGuidance(s: Situation): string {
   switch (s) {
     case "greeting":
       return [
-        "This is your very first reply. Two beats, both short.",
-        "Beat 1: one sentence on HOW you match — you look for complementary",
-        "skills, shared stage, and values fit, not keyword overlap.",
-        "Beat 2: one crisp sharpening question — what's the one thing this",
-        "person must be great at, and what do they refuse to do themselves.",
-        "Do NOT list role examples. Do NOT say 'separated by commas'. Prose only.",
+        "A greeting. Check RECENT_TURNS before you answer.",
+        "IF recent turns show an active search or prior exchange: do NOT",
+        "re-introduce yourself or re-explain how you match. Just warmly pick",
+        "up the thread — e.g. 'hey, still on that sales cofounder search?'",
+        "or 'hey — want me to keep going where we left off?'. One short line.",
+        "IF there are no recent turns (genuine first message): two beats.",
+        "Beat 1: one sentence on HOW you match — complementary skills, shared",
+        "stage, values fit, not keyword overlap. Beat 2: one crisp sharpening",
+        "question — what's the one thing this person must be great at, and",
+        "what do they refuse to do themselves.",
+        "Never list role examples. Never say 'separated by commas'. Prose only.",
       ].join(" ");
     case "non_cohort":
       return [
