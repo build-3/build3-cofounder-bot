@@ -106,6 +106,15 @@ export async function classifyIntent(input: {
       : { intent: "greeting", confidence: 0.9 };
   }
 
+  // Knowledge question shortcut: "who is X", "what is X", "explain X",
+  // "tell me about X". These are ALWAYS off_topic — the bot should answer
+  // the question, not treat it as a search cue. Without this, "whos future?"
+  // can accidentally trip the role-word path (via "founder" in other turns)
+  // or end up misclassified as greeting.
+  if (/^\s*(who('?s|\s+is)|what('?s|\s+is)|whats|whos|explain|tell me about|hows|how's)\b/i.test(text)) {
+    return { intent: "off_topic", confidence: 0.85 };
+  }
+
   // Deterministic discover/refine catch for obvious search phrasings. Stops
   // Gemini from misclassifying "find me a sales founder" as a greeting.
   // We only fire when the ask mentions a cofounder-role word AND NOT an
@@ -177,7 +186,7 @@ export async function composeReply(ctx: VoiceContext): Promise<string> {
         { role: "system", content: VOICE_SYSTEM },
         { role: "user", content: buildVoiceUser(ctx) },
       ],
-      { temperature: 0.85, maxTokens: 180 },
+      { temperature: 0.85, maxTokens: 320 },
     );
     const clean = raw.trim().replace(/^["']|["']$/g, "");
     if (clean.length === 0) throw new Error("empty voice reply");
