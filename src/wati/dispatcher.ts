@@ -454,7 +454,7 @@ async function runAndReply(
     );
     return;
   }
-  const body = formatCardText(cards[0]!, 0, 1);
+  const body = formatCardText(cards[0]!);
   await ctx.deps.wati.sendButtons({
     waId: ctx.founder.phone,
     body,

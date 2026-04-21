@@ -84,3 +84,11 @@ One entry per significant architectural choice. Format: **Decision → Why → A
 - **Alternatives considered**: Stay OpenAI-only (simpler, but blocks side-by-side evaluation); switch everything hard to Gemini and delete OpenAI support (unnecessarily rigid).
 - **Tradeoffs**: We now carry two provider adapters and two secret contracts (`GOOGLE_AI_KEY`, `OPENAI_API_KEY`). Acceptable — the interface boundary was already in place and this is exactly the flexibility it was meant to buy us.
 - **Date**: 2026-04-20
+
+## ADR-011 — Candidate card becomes bullet-prose with a grounded drawback (rerank_v3, voice_v3)
+
+- **Decision**: Reshape the candidate card from structured meta + "Why this could work" to operator-voice bullets + an honest "Potential drawback" line. Rerank prompt bumped to `rerank_v3` to return `bullets[]` and `drawback` alongside `rationale`. Voice prompt bumped to `voice_v3` with a two-beat greeting and a warmer `non_cohort` rejection.
+- **Why**: A WhatsApp conversation with a prospective founder (2026-04-21) read as a matcher wrapped in a menu — scripted greeting, Closest-fit header, tag soup, flat rejection. Boardy reads as a thoughtful operator because the card is prose with a drawback and the opener explains *how* matching works before asking for input. The gap was posture, not plumbing.
+- **Alternatives considered**: (a) Keep v2 and iterate copy in place — violates CLAUDE.md rule #3 (versioned prompts, no in-place edits). (b) Store bullets/drawback in a new column on `candidates_shown` — would require a migration; deferred, bullets are now in-memory only while `rationale` continues to serve the consent flow.
+- **Tradeoffs**: Two more fields for the LLM to get right per candidate, which costs tokens and one more way the response can misbehave. Schema defaults them to empty so an old-shape response still parses, and `formatCardText` falls back to `rationale` when bullets are empty. Rollback = one-line import flip (`rerank_v3` → `rerank_v2`, `voice_v3` → `voice_v2`). Batch B (qualified-no / two-at-a-time / topic-switch intent) is explicitly deferred.
+- **Date**: 2026-04-21

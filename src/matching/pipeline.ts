@@ -9,7 +9,19 @@ export interface CandidateCard {
   name: string;
   city: string;
   headline: string;
+  /**
+   * One short sentence — the best single reason this match is worth a
+   * conversation. Persisted on `candidates_shown.rationale` and re-used as
+   * the requester's note to the target when they accept (see consent flow).
+   */
   rationale: string;
+  /**
+   * 2–3 operator-voice bullets used when rendering the card to the requester.
+   * Not persisted — only the rationale is kept across turns.
+   */
+  bullets: string[];
+  /** Honest "this could fail because…" line. Empty string means omit. */
+  drawback: string;
   seniority: string;
   years_exp: number;
   sector_tags: string[];
@@ -45,6 +57,8 @@ export async function runMatching(args: {
         city: c.city,
         headline: c.headline,
         rationale: r.rationale,
+        bullets: r.bullets,
+        drawback: r.drawback,
         seniority: c.seniority,
         years_exp: c.years_exp,
         sector_tags: c.sector_tags,
@@ -121,49 +135,40 @@ export async function markShownAction(
   `;
 }
 
-export function formatCardText(card: CandidateCard, index: number, total: number): string {
-  const header = total > 1
-    ? `Closest fit right now (${index + 1}/${total})\n\n`
-    : "Closest fit right now\n\n";
+/**
+ * Render a single candidate card for WhatsApp.
+ *
+ * Shape (Boardy-style bullet-prose):
+ *
+ *   *Name* — City
+ *
+ *   • bullet one
+ *   • bullet two
+ *
+ *   Potential drawback: …   (omitted if empty)
+ *
+ *   Reply *Accept* to connect, *Skip* to see the next.
+ *
+ * Bullets come from the reranker. If the reranker returned none (old v2
+ * response shape, or an LLM that misbehaved), we fall back to the single-
+ * line rationale so the card still reads.
+ */
+export function formatCardText(card: CandidateCard): string {
+  const header = `*${card.name}* — ${card.city}`;
 
-  // Meta line: seniority · years · top stage · top 2 sectors.
-  // Kept short so the card stays scannable on a phone.
-  const meta: string[] = [];
-  if (card.seniority) meta.push(humanSeniority(card.seniority));
-  if (card.years_exp > 0) meta.push(`${card.years_exp} yrs`);
-  if (card.stage_tags[0]) meta.push(humanTag(card.stage_tags[0]));
-  const topSectors = card.sector_tags.slice(0, 2).map(humanTag);
-  if (topSectors.length) meta.push(topSectors.join(" / "));
-  const metaLine = meta.length ? `${meta.join(" · ")}\n` : "";
+  const bullets = card.bullets.filter((b) => b.trim().length > 0);
+  const body =
+    bullets.length > 0
+      ? bullets.map((b) => `• ${b}`).join("\n")
+      : card.rationale;
+
+  const drawback = card.drawback.trim();
+  const drawbackLine = drawback ? `\n\nPotential drawback: ${drawback}` : "";
 
   return (
-    `${header}*${card.name}* — ${card.city}\n` +
-    `${card.headline}\n` +
-    `${metaLine}\n` +
-    `_Why this could work:_ ${card.rationale}\n\n` +
+    `${header}\n\n` +
+    `${body}` +
+    `${drawbackLine}\n\n` +
     `Reply *Accept* to connect, *Skip* to see the next.`
   );
-}
-
-function humanSeniority(s: string): string {
-  switch (s) {
-    case "founder-level": return "Founder-level";
-    case "senior-ic":     return "Senior IC";
-    case "operator":      return "Operator";
-    default:              return s;
-  }
-}
-
-function humanTag(t: string): string {
-  // "b2b-saas" → "B2B SaaS", "pre-seed" → "Pre-seed", "fintech" → "Fintech"
-  const map: Record<string, string> = {
-    "b2b-saas": "B2B SaaS",
-    "ai-infra": "AI infra",
-    "pre-idea": "Pre-idea",
-    "pre-seed": "Pre-seed",
-    "series-a": "Series A",
-    "d2c": "D2C",
-  };
-  if (map[t]) return map[t]!;
-  return t.charAt(0).toUpperCase() + t.slice(1);
 }

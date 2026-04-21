@@ -5,7 +5,7 @@ import {
   buildRerankUserPrompt,
   RERANK_SYSTEM,
   type RerankCandidate,
-} from "../llm/prompts/rerank_v2.js";
+} from "../llm/prompts/rerank_v3.js";
 import type { SearchStateRow } from "../conversation/store.js";
 import type { RetrievedCandidate } from "./retriever.js";
 
@@ -15,6 +15,10 @@ const RerankOutputSchema = z.object({
       founder_id: z.string().uuid(),
       score: z.number(),
       rationale: z.string().min(1).max(280),
+      // v3: bullets + drawback. Defaulted so a v2-shaped response (no
+      // bullets) still parses — the card will just fall back to rationale.
+      bullets: z.array(z.string().max(200)).max(4).default([]),
+      drawback: z.string().max(240).default(""),
       breakdown: z
         .object({
           role_fit: z.number(),
@@ -34,6 +38,8 @@ export interface RankedCandidate {
   founder_id: string;
   score: number;
   rationale: string;
+  bullets: string[];
+  drawback: string;
 }
 
 const TOP_N_TO_RERANK = 8;
@@ -102,6 +108,19 @@ function humanRationale(candidate: RetrievedCandidate, state: SearchStateRow, us
   return bits.join(", ").slice(0, 140) || "closest fit on role, trajectory, and overall cofounder complement";
 }
 
+function fallbackBullets(candidate: RetrievedCandidate): string[] {
+  // Derived, not invented: headline is a single grounded fact; the first
+  // sentence of summary is a second one. Good enough for the rare path where
+  // the LLM is down.
+  const bullets: string[] = [];
+  if (candidate.headline) bullets.push(candidate.headline);
+  const firstSentence = candidate.summary.split(/(?<=[.!?])\s+/)[0]?.trim();
+  if (firstSentence && firstSentence !== candidate.headline) {
+    bullets.push(firstSentence.slice(0, 180));
+  }
+  return bullets.slice(0, 3);
+}
+
 function cheapFallbackRank(
   candidates: RetrievedCandidate[],
   state: SearchStateRow,
@@ -115,6 +134,8 @@ function cheapFallbackRank(
       founder_id: candidate.founder_id,
       score: heuristicScore(candidate, state, userTurn),
       rationale: humanRationale(candidate, state, userTurn),
+      bullets: fallbackBullets(candidate),
+      drawback: "",
     }));
 }
 
@@ -171,6 +192,12 @@ export async function rerank(
       founder_id: r.founder_id,
       score: r.score,
       rationale: r.rationale.slice(0, 140),
+      bullets: (r.bullets ?? [])
+        .map((b) => b.trim())
+        .filter((b) => b.length > 0)
+        .slice(0, 3)
+        .map((b) => b.slice(0, 180)),
+      drawback: (r.drawback ?? "").trim().slice(0, 240),
     }));
   } catch (err) {
     logger.warn({ err }, "rerank fell back to retrieval order");

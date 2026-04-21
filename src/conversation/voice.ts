@@ -7,7 +7,7 @@ import {
   VOICE_SYSTEM,
   type Situation,
   type VoiceContext,
-} from "../llm/prompts/voice_v2.js";
+} from "../llm/prompts/voice_v3.js";
 import { logger } from "../lib/logger.js";
 import { getSql } from "../db/client.js";
 import type { Sql } from "postgres";
@@ -124,7 +124,7 @@ function minimalFallback(s: Situation, firstName: string): string {
   const name = firstName || "there";
   switch (s) {
     case "greeting":
-      return `Hey ${name} — I'm the Build3 Cofounder Bot. Tell me in your own words who you're looking for.`;
+      return `Hey ${name} — I match cofounders on complementary skills, stage, and values fit, not just keywords. What's the one thing your cofounder has to be great at?`;
     case "discover_ack":   return "On it.";
     case "skip_ack":       return "No worries — next one coming.";
     case "refine_ack":     return "Got it — updating my search.";
@@ -134,7 +134,7 @@ function minimalFallback(s: Situation, firstName: string): string {
     case "no_matches":     return "Drawing a blank — try a role (technical/sales/growth/product) and a sector or city.";
     case "off_topic":      return "Not sure on that one — I'm here for cofounder matches though. Who are you looking for?";
     case "stop_ack":       return "Got it — I'll hold off. Just say hi whenever you want to pick this up again.";
-    case "non_cohort":     return "Hey — this bot is only for founders in the Build3 cohort. Ping the Build3 team if you think that's a mistake.";
+    case "non_cohort":     return "Hey — I'm the matching bot for the Build3 founder cohort, so I can't help directly here. If you're a cohort founder getting this by mistake, ping the Build3 team. Otherwise: build3.com.";
     case "opted_out":      return "You're paused right now. Reply OPTIN to turn this back on.";
     case "error_generic":  return "Hit a snag on my side — try again in a moment.";
     case "clarify":        return "Could you say a bit more about who you're looking for?";

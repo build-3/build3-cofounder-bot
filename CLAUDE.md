@@ -78,6 +78,7 @@ See `docs/` for deeper detail:
 - Inbound webhook: `POST /webhooks/wati` with header `X-Webhook-Secret: $WATI_WEBHOOK_SECRET`
 - Events to enable in WATI dashboard: **Message Received**, **Interactive Message Reply** (button clicks). Message Status is optional.
 - Outbound: `src/wati/client.ts` — `sendText`, `sendInteractiveButtons`, `sendTemplate` (templates only for 24h-window reopens).
+- **Full dashboard config (what to disable, how to verify):** [`docs/WATI_CONFIG.md`](docs/WATI_CONFIG.md). Any auto-reply, welcome message, or chatbot keyword flow in the WATI dashboard will intercept messages before our webhook fires — keep that surface empty.
 
 Exact string to paste into WATI once deployed:
 

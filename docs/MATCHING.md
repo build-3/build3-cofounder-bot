@@ -24,7 +24,7 @@ The requester is always excluded. Already-accepted/skipped candidates in the cur
 **Goal**: turn 15 plausible candidates into 3 great ones with a one-line "why" each.
 
 - Model: active provider chat model (`GEMINI_MODEL_CHAT` by default, `OPENAI_MODEL_CHAT` when `LLM_PROVIDER=openai`), temperature 0.2.
-- Prompt: `src/llm/prompts/rerank_v2.ts`.
+- Prompt: `src/llm/prompts/rerank_v3.ts`.
 - Rubric (each scored 0–3, summed):
   - Role fit
   - Reciprocal fit (does this founder appear to want the kind of counterpart the requester described?)
@@ -32,9 +32,30 @@ The requester is always excluded. Already-accepted/skipped candidates in the cur
   - Stage fit
   - Location preference
   - Anti-pref avoidance (negative)
-- Output: strict JSON `[{ founder_id, score, rationale }]`, validated via Zod. On parse failure: retry once; then fall back to retrieval order with a generic rationale.
+- Output: strict JSON `[{ founder_id, score, rationale, bullets, drawback }]`, validated via Zod. On parse failure: retry once; then fall back to retrieval order with a derived rationale and headline-based bullets.
+  - `rationale` — one short sentence, re-used as the requester's note to the target when they accept.
+  - `bullets` — 2–3 operator-voice one-liners that render as the card body. Grounded in the candidate payload; empty array is a valid fallback and the card renders from `rationale` instead.
+  - `drawback` — one honest "this could fail because…" sentence. Empty string means the card omits the line.
 
 Top 3 are returned. The top 1 is shown first; 2–3 are held for the next Skip.
+
+### Card shape (rerank_v3 + formatCardText)
+
+Rendered in [`src/matching/pipeline.ts`](../src/matching/pipeline.ts) by `formatCardText`:
+
+```
+*Name* — City
+
+• bullet one
+• bullet two
+• bullet three
+
+Potential drawback: <one grounded sentence>
+
+Reply *Accept* to connect, *Skip* to see the next.
+```
+
+No "Closest fit right now" header, no seniority/years/stage meta line. Bullets come from the reranker and are not persisted across turns — only `rationale` is stored on `candidates_shown` so the consent flow can re-use it as the requester's note.
 
 ---
 
