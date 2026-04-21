@@ -49,6 +49,10 @@ export interface RankedCandidate {
   intro_recommendation: "warm" | "hold";
   /** Required when intro_recommendation === "hold", else "". */
   hold_reason: string;
+  /** 0-3 from the rerank breakdown. 0 = this card misses the asked sector
+   * entirely and the caller should be honest about the gap. Undefined when
+   * the LLM didn't return a breakdown (v2/v3 response shape). */
+  sector_fit?: number;
 }
 
 const TOP_N_TO_RERANK = 8;
@@ -139,15 +143,21 @@ function cheapFallbackRank(
   return [...candidates]
     .sort((a, b) => heuristicScore(b, state, userTurn) - heuristicScore(a, state, userTurn))
     .slice(0, RETURN_TOP)
-    .map((candidate) => ({
-      founder_id: candidate.founder_id,
-      score: heuristicScore(candidate, state, userTurn),
-      rationale: humanRationale(candidate, state, userTurn),
-      bullets: fallbackBullets(candidate),
-      drawback: "",
-      intro_recommendation: "warm",
-      hold_reason: "",
-    }));
+    .map((candidate) => {
+      const sectorFit = state.sector.length === 0
+        ? 2
+        : candidate.sector_tags.some((tag) => state.sector.includes(tag)) ? 3 : 0;
+      return {
+        founder_id: candidate.founder_id,
+        score: heuristicScore(candidate, state, userTurn),
+        rationale: humanRationale(candidate, state, userTurn),
+        bullets: fallbackBullets(candidate),
+        drawback: "",
+        intro_recommendation: "warm",
+        hold_reason: "",
+        sector_fit: sectorFit,
+      };
+    });
 }
 
 export async function rerank(
@@ -199,24 +209,28 @@ export async function rerank(
     // Filter to ids the LLM actually knew about (guard against hallucinated ids).
     const known = new Set(head.map((c) => c.founder_id));
     const filtered = parsed.ranked.filter((r) => known.has(r.founder_id));
-    return filtered.slice(0, RETURN_TOP).map((r) => ({
-      founder_id: r.founder_id,
-      score: r.score,
-      rationale: r.rationale.slice(0, 140),
-      bullets: (r.bullets ?? [])
-        .map((b) => b.trim())
-        .filter((b) => b.length > 0)
-        .slice(0, 3)
-        .map((b) => b.slice(0, 180)),
-      drawback: (r.drawback ?? "").trim().slice(0, 240),
-      intro_recommendation: r.intro_recommendation ?? "warm",
-      // Enforce the schema rule: hold_reason is only meaningful when hold.
-      // If the model returned "warm" with a reason, drop it.
-      hold_reason:
-        r.intro_recommendation === "hold"
-          ? (r.hold_reason ?? "").trim().slice(0, 260)
-          : "",
-    }));
+    return filtered.slice(0, RETURN_TOP).map((r) => {
+      const sectorFit = r.breakdown?.sector_fit;
+      return {
+        founder_id: r.founder_id,
+        score: r.score,
+        rationale: r.rationale.slice(0, 140),
+        bullets: (r.bullets ?? [])
+          .map((b) => b.trim())
+          .filter((b) => b.length > 0)
+          .slice(0, 3)
+          .map((b) => b.slice(0, 180)),
+        drawback: (r.drawback ?? "").trim().slice(0, 240),
+        intro_recommendation: r.intro_recommendation ?? "warm",
+        // Enforce the schema rule: hold_reason is only meaningful when hold.
+        // If the model returned "warm" with a reason, drop it.
+        hold_reason:
+          r.intro_recommendation === "hold"
+            ? (r.hold_reason ?? "").trim().slice(0, 260)
+            : "",
+        ...(typeof sectorFit === "number" ? { sector_fit: sectorFit } : {}),
+      };
+    });
   } catch (err) {
     logger.warn({ err }, "rerank fell back to retrieval order");
     return cheapFallbackRank(head, state, userTurn);

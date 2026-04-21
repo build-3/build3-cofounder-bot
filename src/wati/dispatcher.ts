@@ -23,7 +23,6 @@ import {
   runMatching,
 } from "../matching/pipeline.js";
 import { applyDelta, extractRefinement } from "../matching/refinement.js";
-import { detectSectorGap } from "../matching/sector_gap.js";
 import { onTargetAccept, onTargetDecline, propose } from "../consent/machine.js";
 import { getSql } from "../db/client.js";
 import { loadConfig } from "../lib/config.js";
@@ -567,18 +566,19 @@ async function runAndReply(
     );
     return;
   }
-  // Sector-gap honesty: if the user asked for a domain nobody in the cohort
-  // matches, prepend a one-liner so the card doesn't silently pretend the
-  // closest-technical-match is the defence-tech founder they asked for.
-  const gap = detectSectorGap(state, ctx.userTurn, {
-    headline: top.headline,
-    sector_tags: top.sector_tags,
-    bullets: top.bullets,
-    rationale: top.rationale,
-  });
+  // Sector-gap honesty: the reranker scores sector_fit 0-3. A 0 means this
+  // card doesn't match the sector the user asked for. Ask Gemini to write a
+  // one-line preamble acknowledging the gap — beats silently serving an
+  // adjacent candidate as if they fit.
   const cardBody = formatCardText(top);
-  const body = gap.gap
-    ? `No ${gap.askedDomain} founders in the cohort right now — closest technical match:\n\n${cardBody}`
+  const body = top.sector_fit === 0
+    ? `${await composeReply({
+        situation: "sector_gap_preamble",
+        founderFirstName: firstName(ctx.founder),
+        recentTurns: ctx.recent,
+        userTurn: ctx.userTurn,
+        data: searchStateToContext(state),
+      })}\n\n${cardBody}`
     : cardBody;
   const buttons =
     top.intro_recommendation === "hold"
