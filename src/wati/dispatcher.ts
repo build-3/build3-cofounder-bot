@@ -255,14 +255,23 @@ async function route(ctx: Ctx): Promise<void> {
 }
 
 async function onGreeting(ctx: Ctx): Promise<void> {
+  // If there's an active search, don't keep re-asking "still on it?" — just
+  // send the next card. Momentum over interrogation.
+  const state = await getSearchState(ctx.conv.id);
+  const searchActive = Boolean(
+    state.role || state.sector.length || state.stage.length ||
+    state.location.length || state.seniority || state.mustHave.length,
+  );
+  if (searchActive) {
+    await runAndReply(ctx, state);
+    return;
+  }
   const text = await composeReply({
     situation: "greeting",
     founderFirstName: firstName(ctx.founder),
     recentTurns: ctx.recent,
     userTurn: ctx.userTurn,
   });
-  // Thread-pickup line only. The NEXT inbound (yes/refine/etc.) runs matching;
-  // we don't auto-push a card on the greeting itself so the user stays in control.
   await sendText(ctx, text, "greeting");
 }
 
