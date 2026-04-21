@@ -503,16 +503,33 @@ async function runAndReply(
 ): Promise<void> {
   const shown = await getShownFounderIds(ctx.conv.id);
 
-  // Hard cap: at most 3 candidates shown per conversation. After that,
-  // keep asking clarifying questions instead of grinding through the
-  // rest of the cohort.
-  const MAX_CARDS_PER_CONV = 3;
-  if (shown.length >= MAX_CARDS_PER_CONV) {
+  // Cap is scoped to the CURRENT search thread (since last discover/refine),
+  // not the whole conversation. A user refining their ask resets the window,
+  // so you don't get stuck at "no more matches" forever after three skips.
+  const sql = getSql();
+  const [refineRow] = await sql<Array<{ created_at: Date }>>`
+    SELECT created_at FROM turns
+    WHERE conversation_id = ${ctx.conv.id}
+      AND direction = 'in'
+      AND intent IN ('discover', 'refine')
+    ORDER BY created_at DESC LIMIT 1
+  `;
+  const windowStart = refineRow?.created_at ?? new Date(0);
+  const countRows = await sql<Array<{ count: number }>>`
+    SELECT COUNT(*)::int AS count FROM candidates_shown
+    WHERE conversation_id = ${ctx.conv.id}
+      AND created_at >= ${windowStart}
+  `;
+  const shownInWindow = countRows[0]?.count ?? 0;
+
+  const MAX_CARDS_PER_THREAD = 3;
+  if (shownInWindow >= MAX_CARDS_PER_THREAD) {
     const text = await composeReply({
       situation: "no_matches",
       founderFirstName: firstName(ctx.founder),
       recentTurns: ctx.recent,
       userTurn: ctx.userTurn,
+      data: searchStateToContext(state),
     });
     await sendText(ctx, text, "cap-reached");
     return;
@@ -532,6 +549,7 @@ async function runAndReply(
       founderFirstName: firstName(ctx.founder),
       recentTurns: ctx.recent,
       userTurn: ctx.userTurn,
+      data: searchStateToContext(state),
     });
     await sendText(ctx, text, "no-matches");
     return;
