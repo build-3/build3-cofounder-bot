@@ -24,7 +24,7 @@ The requester is always excluded. Already-accepted/skipped candidates in the cur
 **Goal**: turn 15 plausible candidates into 3 great ones with a one-line "why" each.
 
 - Model: active provider chat model (`GEMINI_MODEL_CHAT` by default, `OPENAI_MODEL_CHAT` when `LLM_PROVIDER=openai`), temperature 0.2.
-- Prompt: `src/llm/prompts/rerank_v3.ts`.
+- Prompt: `src/llm/prompts/rerank_v4.ts`.
 - Rubric (each scored 0–3, summed):
   - Role fit
   - Reciprocal fit (does this founder appear to want the kind of counterpart the requester described?)
