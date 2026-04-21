@@ -45,11 +45,13 @@ export async function runMatching(args: {
   state: SearchStateRow;
   userTurn: string;
   alreadyShownFounderIds: string[];
+  recentTurns?: Array<{ direction: "in" | "out"; text: string }>;
 }): Promise<RankedResult> {
-  const retrieved = await retrieve({
+  const { candidates: retrieved } = await retrieve({
     state: args.state,
     userTurn: args.userTurn,
     excludeFounderIds: [args.requesterId, ...args.alreadyShownFounderIds],
+    ...(args.recentTurns ? { recentTurns: args.recentTurns } : {}),
   });
   const ranked = await rerank(retrieved, args.state, args.userTurn);
 
