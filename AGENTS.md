@@ -65,13 +65,26 @@ See `docs/` for deeper detail:
 1. **Idempotency is mandatory.** Every inbound WATI message carries a `wati_message_id`. The `turns` table has a unique index on it. Re-deliveries MUST be no-ops — WATI retries aggressively.
 2. **Never leak a target's profile pre-consent.** When a founder Accepts a candidate, the target sees only: requester's name, city, and a 1–2 line "why they want to talk". Enforced by `src/consent/machine.ts` and tested in `tests/consent/*.test.ts`.
 3. **Prompts are versioned.** All LLM prompts live under `src/llm/prompts/` with a version suffix (e.g. `refinement_v1.ts`). When you change a prompt, bump the version — don't edit in place. This lets us diff-test ranker quality.
+
+   Current versions (live path):
+   - `agent_v1.ts` — Gemini function-calling agent (replaces voice/rerank/intent orchestration)
+   - `refinement_v3.ts` — user turn → `RefinementDelta` (used by `update_search_state` tool)
+   - `rerank_v4.ts` — retrieval → ranked candidates (used by `find_cofounders` tool)
+   - `explain_v1.ts` — 1-line rationale per card
+   - `intro_v1.ts` — mutual-accept intro message
+
+   Legacy (in `src/_legacy/prompts/`, unreferenced):
+   - `voice_v1`, `voice_v2`, `voice_v3` — old conversational surface
+   - `rerank_v1`, `rerank_v2`, `rerank_v3` — old reranker prompts
 4. **Raw `skills[]` is low-weight.** LinkedIn skills are noisy. `src/matching/weights.ts` intentionally de-emphasizes them. Reranker uses role/sector/stage/trajectory instead.
 5. **Skip = soft negative signal**, not a ban. Implemented as a decayed anti-preference in `search_state.anti_prefs`.
-6. **Deterministic path first.** The intent router tries keyword matching before falling back to an LLM call. LLMs are a tool, not the hot path.
+6. **Deterministic path first (LEGACY — see rule 12).** The old intent router tried keyword matching before an LLM call. Now obsolete: the Gemini agent owns routing via function calls. Kept in `src/_legacy/` for reference only.
 7. **Every LLM call has a fallback.** If the LLM returns invalid JSON twice, fall back to a deterministic path (keyword parse, static rationale, etc.) and log a warning. Never crash a conversation.
 8. **Phone numbers are normalized to E.164** at both ingest and webhook boundaries. See `src/identity/gate.ts`.
 9. **Consent requests expire in 72h** (`CONSENT_EXPIRY_HOURS`). The expiry job runs every 15 minutes.
 10. **No PR gets merged without updating docs.** Principal-reviewer gate enforces `PROJECT_STATE.md` freshness.
+11. **Whitelist-only during testing.** `src/wati/dispatcher.ts` hardcodes a 2-number allowlist (`917397599542`, `918468090511`). All other inbounds are silently dropped. Remove when rolling to full cohort.
+12. **Agent owns the turn.** `src/agent/loop.ts:runAgent` is the single entry point. No intent classifier / router / templated card in the live path. Agent must call `finish_turn` exactly once per inbound.
 
 ## WATI wiring
 
