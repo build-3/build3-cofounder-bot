@@ -21,13 +21,27 @@ export interface EmbedOptions {
   taskType?: "RETRIEVAL_QUERY" | "RETRIEVAL_DOCUMENT";
 }
 
-/** Parameters schema for a tool, expressed as a JSON Schema subset. */
+/** Parameters schema for a tool, expressed as a JSON Schema subset.
+ *
+ *  OpenAI rejects arrays without `items` (400 invalid_function_parameters).
+ *  Gemini is more forgiving but the shape is still ambiguous, so every array
+ *  property MUST declare `items`. For primitive arrays use `{ type: "string" }`;
+ *  for object arrays declare the nested shape so strict validators accept it.
+ */
+export type ToolPrimitiveItem = { type: "string" | "number" | "boolean" };
+
+export type ToolObjectItem = {
+  type: "object";
+  properties: Record<string, ToolPrimitiveItem & { description?: string }>;
+  required?: string[];
+};
+
 export interface ToolParameterSchema {
   type: "object";
   properties: Record<string, {
     type: "string" | "number" | "boolean" | "array" | "object";
     description?: string;
-    items?: { type: "string" | "number" | "boolean" };
+    items?: ToolPrimitiveItem | ToolObjectItem;
     enum?: string[];
   }>;
   required?: string[];

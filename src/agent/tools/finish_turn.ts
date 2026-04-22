@@ -37,6 +37,14 @@ export const finishTurnSchema: ToolParameterSchema = {
     buttons: {
       type: "array",
       description: "Optional interactive buttons (max 2). Use ids like 'accept', 'skip', 'force_intro'.",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Button id (e.g. 'accept')" },
+          title: { type: "string", description: "Button label (<=20 chars)" },
+        },
+        required: ["id", "title"],
+      },
     },
   },
   required: ["reply"],
