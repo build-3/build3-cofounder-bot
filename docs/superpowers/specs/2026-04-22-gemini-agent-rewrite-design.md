@@ -31,20 +31,29 @@ deleted. The agent is the product.
 
 ---
 
-## What gets deleted
+## What gets moved to `src/_legacy/` (NOT deleted)
 
-- `src/conversation/voice.ts` — intent classifier, composeReply, situation
-  templates, minimalFallback. Gone.
-- `src/llm/prompts/voice_v*.ts` — all voice prompt files. Gone.
-- `src/llm/prompts/rerank_v*.ts` — rerank prompt files (reranker logic moves
-  inside the `find_cofounders` tool, called internally).
-- `src/wati/dispatcher.ts` — the entire route() switch, onDiscover, onRefine,
-  onGreeting, onSkip, onAccept, onOffTopic, runAndReply, formatCardText usage.
-  Replaced by a thin shim that calls `runAgent`.
-- `src/matching/pipeline.ts` — `formatCardText`, `formatHoldCard`,
-  `formatTwoCardsText`, `shouldShowTwo`. The agent writes its own card body.
+Old code is preserved untouched but unimported from the live path. Nothing
+in `src/agent/`, `src/wati/`, or anywhere else in `src/` references the
+legacy directory. It exists for reference and quick rollback only.
+
+- `src/conversation/voice.ts` → `src/_legacy/voice.ts` — intent classifier,
+  composeReply, situation templates, minimalFallback.
+- `src/llm/prompts/voice_v*.ts` → `src/_legacy/prompts/voice_v*.ts`
+- `src/llm/prompts/rerank_v1.ts`, `rerank_v2.ts`, `rerank_v3.ts` →
+  `src/_legacy/prompts/` (keep `rerank_v4.ts` in place — used by the
+  `find_cofounders` tool).
+- `src/wati/dispatcher.ts` legacy route() logic → extracted to
+  `src/_legacy/dispatcher_legacy.ts`. The live dispatcher becomes a thin
+  shim calling `runAgent` (see Dispatcher shim section).
+- Card formatters from `src/matching/pipeline.ts` (`formatCardText`,
+  `formatHoldCard`, `formatTwoCardsText`, `shouldShowTwo`) → move to
+  `src/_legacy/card_formatters.ts`. The `CandidateCard` interface and
   `runMatching`, `recordShown`, `getShownFounderIds`, `markShownAction`,
-  `getLastShownFounderId` stay (used by tools).
+  `getLastShownFounderId` stay in pipeline.ts (used by tools).
+
+Enforcement: a lint rule (or a simple grep in CI) fails if anything under
+`src/` outside `src/_legacy/` imports from `src/_legacy/`.
 
 ---
 
@@ -270,3 +279,61 @@ No routing, no intent classification, no switch statement.
   feels like the same thread not a new query.
 - Agent derail rate < 5% in first 50 real conversations.
 - p95 latency (inbound → outbound) < 8s.
+
+---
+
+## Verification agent (post-build audit)
+
+After the implementation is complete and tests pass, spawn a **verification
+sub-agent** to independently audit the work. This runs before the first
+real WhatsApp test.
+
+**Scope of audit:**
+
+1. **Spec conformance** — does every item in this spec have a corresponding
+   file/function in the new code? Flag anything missing or reinterpreted.
+
+2. **Legacy isolation** — grep the live path (`src/` excluding `src/_legacy/`)
+   for any import of legacy files. Zero tolerance. Flag any leak.
+
+3. **Tool handler logic review** — for each of the 6 tools:
+   - Input validation (Zod schema matches the spec contract)
+   - DB writes are idempotent (re-calling with same args doesn't corrupt
+     state)
+   - Error paths return structured errors the agent can quote, not throws
+   - `propose_intro` enforces the no-leak-before-consent rule — review the
+     data flow personally
+
+4. **Agent loop safety** — does the loop honor the 6-iteration cap? Does it
+   reliably detect no-finish_turn-called and fall through to the static
+   fallback? Is there any path where the agent could trigger two outbound
+   messages?
+
+5. **Whitelist gate** — confirm the hardcoded whitelist is the first check
+   in the dispatcher, before any DB write or LLM call. Confirm the drop is
+   truly silent (no WATI call of any kind).
+
+6. **Test coverage** — do the integration tests exercise: happy path,
+   iteration overflow, tool-throws-error, empty finish_turn reply, agent
+   skips finish_turn entirely? If any is missing, flag it.
+
+7. **Prompt version hygiene** — is `agent_v1.ts` versioned correctly? Is
+   `CLAUDE.md` / `AGENTS.md` updated to point at it?
+
+8. **Use-case walkthrough** — simulate these conversations mentally against
+   the new code and identify any path that breaks:
+   - Cold "hi" from whitelist number
+   - "find me a technical cofounder in defence tech" (empty pool)
+   - "find me someone to build with" (vague)
+   - Accept → target Accept → intro sent
+   - Skip, Skip, Skip (anti-pref accumulation)
+   - "stop" mid-conversation
+   - Non-whitelist number sends "hello" (must be silent)
+
+**Output format:** a written report with a table of findings:
+`severity (CRITICAL/HIGH/MEDIUM/LOW) | area | finding | suggested fix`.
+Nothing is fixed automatically — findings come back to the main session for
+triage and action.
+
+**Trigger:** after final commit of the implementation, before deploying to
+Vercel.
