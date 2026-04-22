@@ -15,6 +15,7 @@ const schema = z.object({
 
   GOOGLE_AI_KEY: z.string().min(1).optional(),
   GEMINI_MODEL_CHAT: z.string().default("gemini-2.5-flash"),
+  GEMINI_MODEL_AGENT: z.string().default("gemini-2.5-pro"),
   GEMINI_MODEL_EMBED: z.string().default("gemini-embedding-001"),
 
   LLM_PROVIDER: z.enum(["openai", "gemini"]).default("gemini"),
