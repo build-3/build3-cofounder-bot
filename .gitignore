@@ -13,3 +13,4 @@ data/real_*.csv
 data/*.private.csv
 .vercel
 .claude/
+.worktrees/
