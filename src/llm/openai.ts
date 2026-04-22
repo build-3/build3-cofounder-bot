@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { loadConfig } from "../lib/config.js";
 import { logger } from "../lib/logger.js";
-import type { EmbedOptions, JsonCallOptions, LLMMessage, LLMProvider } from "./provider.js";
+import type { AgentLoopResult, EmbedOptions, JsonCallOptions, LLMMessage, LLMProvider } from "./provider.js";
 
 let _client: OpenAI | null = null;
 function client() {
@@ -59,5 +59,9 @@ export const openaiProvider: LLMProvider = {
       input: inputs,
     });
     return res.data.map((d) => d.embedding);
+  },
+
+  async agentLoop(): Promise<AgentLoopResult> {
+    throw new Error("openai provider does not implement agentLoop — use gemini");
   },
 };
