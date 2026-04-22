@@ -13,6 +13,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.api.json",
     "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "lint:legacy": "./scripts/check-legacy-isolation.sh",
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
