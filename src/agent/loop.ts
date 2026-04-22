@@ -127,7 +127,7 @@ export async function runAgent(args: RunAgentArgs): Promise<AgentTurnResult> {
     return { reply: FALLBACK_REPLY, cleanFinish: false, iterations };
   }
 
-  const payload = finishedPayload;
+  const payload: { reply: string; buttons?: AgentButton[] } = finishedPayload;
 
   if (payload.buttons && payload.buttons.length > 0) {
     await wati.sendButtons({
