@@ -95,8 +95,9 @@ export const openaiProvider: LLMProvider = {
     let iterations = 0;
     let toolCallCount = 0;
     let finalText = "";
+    let finished = false;
 
-    while (iterations < opts.maxIterations) {
+    while (iterations < opts.maxIterations && !finished) {
       iterations += 1;
 
       const res = await client().chat.completions.create({
@@ -153,7 +154,17 @@ export const openaiProvider: LLMProvider = {
           tool_call_id: tc.id,
           content: JSON.stringify(result ?? {}),
         } as ChatCompletionMessageParam);
+        // finish_turn signals end of turn — break immediately so the loop
+        // doesn't make another model call after the reply is already set.
+        if (toolCall.name === "finish_turn") {
+          finished = true;
+          break;
+        }
       }
+    }
+
+    if (finished) {
+      return { completedNaturally: true, toolCallCount, finalText };
     }
 
     logger.warn({ maxIterations: opts.maxIterations }, "openai agent loop hit iteration cap");

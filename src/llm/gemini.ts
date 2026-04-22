@@ -215,8 +215,9 @@ export const geminiProvider: LLMProvider = {
 
     let iterations = 0;
     let finalText = "";
+    let finished = false;
 
-    while (iterations < opts.maxIterations) {
+    while (iterations < opts.maxIterations && !finished) {
       iterations += 1;
 
       const response = await fetch(`${API_ROOT}/models/${model}:generateContent`, {
@@ -278,7 +279,16 @@ export const geminiProvider: LLMProvider = {
             },
           }],
         });
+        // finish_turn signals end of turn — stop immediately.
+        if (toolCall.name === "finish_turn") {
+          finished = true;
+          break;
+        }
       }
+    }
+
+    if (finished) {
+      return { completedNaturally: true, toolCallCount: iterations, finalText };
     }
 
     logger.warn({ maxIterations: opts.maxIterations }, "agent loop hit iteration cap");
