@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  formatCardText,
-  formatHoldCard,
-  type CandidateCard,
-} from "../../src/matching/pipeline.js";
+import { formatCardText, formatHoldCard } from "../../src/_legacy/card_formatters.js";
+import type { CandidateCard } from "../../src/matching/pipeline.js";
 
 function makeHoldCard(overrides: Partial<CandidateCard> = {}): CandidateCard {
   return {
