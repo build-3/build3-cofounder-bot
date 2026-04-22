@@ -1,6 +1,15 @@
 import { loadConfig } from "../lib/config.js";
 import { logger } from "../lib/logger.js";
-import type { EmbedOptions, JsonCallOptions, LLMMessage, LLMProvider } from "./provider.js";
+import type {
+  AgentLoopOptions,
+  AgentLoopResult,
+  EmbedOptions,
+  JsonCallOptions,
+  LLMMessage,
+  LLMProvider,
+  ToolCall,
+  ToolDefinition,
+} from "./provider.js";
 
 const API_ROOT = "https://generativelanguage.googleapis.com/v1beta";
 
@@ -20,6 +29,25 @@ interface GeminiEmbedResponse {
   embedding?: {
     values?: number[];
   };
+}
+
+interface GeminiFunctionCall {
+  name: string;
+  args: Record<string, unknown>;
+}
+
+interface GeminiGenerateWithToolsResponse {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{
+        text?: string;
+        functionCall?: GeminiFunctionCall;
+      }>;
+      role?: string;
+    };
+    finishReason?: string;
+  }>;
+  promptFeedback?: { blockReason?: string };
 }
 
 function apiKey(): string {
@@ -62,6 +90,16 @@ function extractText(response: GeminiGenerateResponse): string {
 
   const blockReason = response.promptFeedback?.blockReason ?? response.candidates?.[0]?.finishReason;
   throw new Error(blockReason ? `gemini returned no text (${blockReason})` : "gemini returned no text");
+}
+
+function toolsToGeminiFormat(tools: ToolDefinition[]) {
+  return [{
+    functionDeclarations: tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters,
+    })),
+  }];
 }
 
 async function generate(
@@ -155,5 +193,87 @@ export const geminiProvider: LLMProvider = {
     );
 
     return results;
+  },
+
+  async agentLoop(opts: AgentLoopOptions): Promise<AgentLoopResult> {
+    const cfg = loadConfig();
+    const model = opts.model ?? cfg.GEMINI_MODEL_AGENT;
+
+    const history: Array<{
+      role: "user" | "model";
+      parts: Array<{ text?: string; functionCall?: GeminiFunctionCall; functionResponse?: { name: string; response: Record<string, unknown> } }>;
+    }> = opts.messages
+      .filter((m) => m.role !== "system")
+      .map((m) => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: m.content }],
+      }));
+
+    const systemInstruction = opts.system.trim()
+      ? { parts: [{ text: opts.system.trim() }] }
+      : undefined;
+
+    let iterations = 0;
+    let finalText = "";
+
+    while (iterations < opts.maxIterations) {
+      iterations += 1;
+
+      const response = await fetch(`${API_ROOT}/models/${model}:generateContent`, {
+        method: "POST",
+        headers: buildHeaders(),
+        body: JSON.stringify({
+          contents: history,
+          systemInstruction,
+          tools: toolsToGeminiFormat(opts.tools),
+          generationConfig: {
+            temperature: opts.temperature ?? 0.9,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(`gemini agent call failed: ${response.status} ${body.slice(0, 200)}`);
+      }
+
+      const json = (await response.json()) as GeminiGenerateWithToolsResponse;
+      const parts = json.candidates?.[0]?.content?.parts ?? [];
+
+      const functionCalls = parts
+        .map((p) => p.functionCall)
+        .filter((c): c is GeminiFunctionCall => Boolean(c));
+      const textParts = parts.map((p) => p.text ?? "").filter(Boolean).join("");
+
+      if (textParts) finalText = textParts;
+
+      history.push({ role: "model", parts });
+
+      if (functionCalls.length === 0) {
+        return { completedNaturally: true, toolCallCount: iterations - 1, finalText };
+      }
+
+      for (const call of functionCalls) {
+        const toolCall: ToolCall = { name: call.name, args: call.args ?? {} };
+        let result: unknown;
+        try {
+          result = await opts.onToolCall(toolCall);
+        } catch (err) {
+          result = { error: err instanceof Error ? err.message : "tool threw" };
+        }
+        history.push({
+          role: "user",
+          parts: [{
+            functionResponse: {
+              name: call.name,
+              response: result as Record<string, unknown> ?? {},
+            },
+          }],
+        });
+      }
+    }
+
+    logger.warn({ maxIterations: opts.maxIterations }, "agent loop hit iteration cap");
+    return { completedNaturally: false, toolCallCount: iterations, finalText };
   },
 };
