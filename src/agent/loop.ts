@@ -1,0 +1,148 @@
+import { logger } from "../lib/logger.js";
+import { getLLM } from "../llm/index.js";
+import { AGENT_SYSTEM } from "../llm/prompts/agent_v1.js";
+import type { ToolCall } from "../llm/provider.js";
+import type { Founder } from "../identity/gate.js";
+import type { SearchStateRow } from "../conversation/store.js";
+import type { CandidateCard, RankedResult } from "../matching/pipeline.js";
+import type { WatiClient } from "../wati/client.js";
+import type { AgentTurnResult, AgentButton } from "./types.js";
+import { buildAgentContext } from "./context.js";
+import {
+  AGENT_TOOLS,
+  handleFindCofounders,
+  handleUpdateSearchState,
+  handleGetFounderDetail,
+  handleProposeIntro,
+  handleMarkSkipped,
+  handleFinishTurn,
+} from "./tools/index.js";
+import type { FounderDetail } from "./tools/get_founder_detail.js";
+
+const MAX_ITERATIONS = 6;
+const FALLBACK_REPLY = "Hit a snag on my end — try again in a moment.";
+
+export interface RunAgentDeps {
+  getSearchState: (convId: string) => Promise<SearchStateRow>;
+  writeSearchState: (state: SearchStateRow) => Promise<void>;
+  getRecentTurns: (convId: string) => Promise<Array<{ direction: "in" | "out"; text: string }>>;
+  getShownFounderIds: (convId: string) => Promise<string[]>;
+  runMatching: (args: {
+    requesterId: string;
+    state: SearchStateRow;
+    userTurn: string;
+    alreadyShownFounderIds: string[];
+  }) => Promise<RankedResult>;
+  recordShown: (convId: string, cards: CandidateCard[]) => Promise<boolean>;
+  markShownAction: (convId: string, founderId: string, action: "accepted" | "skipped") => Promise<void>;
+  fetchFounderDetail: (id: string) => Promise<FounderDetail | null>;
+  propose: (args: { requesterId: string; targetId: string; requesterNote: string }) => Promise<void>;
+}
+
+export interface RunAgentArgs {
+  founder: Founder;
+  conversationId: string;
+  userTurn: string;
+  wati: Pick<WatiClient, "sendText" | "sendButtons">;
+  deps: RunAgentDeps;
+}
+
+export async function runAgent(args: RunAgentArgs): Promise<AgentTurnResult> {
+  const { founder, conversationId, userTurn, wati, deps } = args;
+
+  let finishedPayload: { reply: string; buttons?: AgentButton[] } | null = null;
+  let iterations = 0;
+
+  try {
+    const [state, recentTurns, shownIds] = await Promise.all([
+      deps.getSearchState(conversationId),
+      deps.getRecentTurns(conversationId),
+      deps.getShownFounderIds(conversationId),
+    ]);
+
+    const ctxBlock = buildAgentContext({
+      founder,
+      recentTurns,
+      searchState: state,
+      shownFounderIds: shownIds,
+    });
+
+    const onToolCall = async (call: ToolCall): Promise<unknown> => {
+      logger.info({ tool: call.name, convId: conversationId }, "agent tool call");
+      switch (call.name) {
+        case "find_cofounders":
+          return handleFindCofounders(call.args, {
+            requesterId: founder.id,
+            conversationId,
+            getState: deps.getSearchState,
+            getShownFounderIds: deps.getShownFounderIds,
+            runMatching: deps.runMatching,
+            recordShown: deps.recordShown,
+          });
+        case "update_search_state":
+          return handleUpdateSearchState(call.args, {
+            conversationId,
+            getState: deps.getSearchState,
+            writeState: deps.writeSearchState,
+          });
+        case "get_founder_detail":
+          return handleGetFounderDetail(call.args, { fetchFounder: deps.fetchFounderDetail });
+        case "propose_intro":
+          return handleProposeIntro(call.args, {
+            requesterId: founder.id,
+            propose: deps.propose,
+            markAccepted: (id) => deps.markShownAction(conversationId, id, "accepted"),
+          });
+        case "mark_skipped":
+          return handleMarkSkipped(call.args, {
+            conversationId,
+            markShownAction: deps.markShownAction,
+          });
+        case "finish_turn": {
+          const result = handleFinishTurn(call.args);
+          finishedPayload = { reply: result.reply, ...(result.buttons ? { buttons: result.buttons } : {}) };
+          return { done: true };
+        }
+        default:
+          return { error: `unknown tool: ${call.name}` };
+      }
+    };
+
+    const result = await getLLM().agentLoop({
+      system: AGENT_SYSTEM,
+      messages: [{ role: "user", content: `${ctxBlock}\n\nUSER_TURN: ${userTurn}` }],
+      tools: AGENT_TOOLS,
+      onToolCall,
+      maxIterations: MAX_ITERATIONS,
+      temperature: 0.9,
+    });
+    iterations = result.toolCallCount;
+  } catch (err) {
+    logger.error({ err, convId: conversationId }, "agent loop threw");
+  }
+
+  if (!finishedPayload) {
+    logger.warn({ convId: conversationId, iterations }, "agent did not call finish_turn — falling back");
+    await wati.sendText({ waId: founder.phone, text: FALLBACK_REPLY });
+    return { reply: FALLBACK_REPLY, cleanFinish: false, iterations };
+  }
+
+  const payload = finishedPayload;
+
+  if (payload.buttons && payload.buttons.length > 0) {
+    await wati.sendButtons({
+      waId: founder.phone,
+      body: payload.reply,
+      buttons: payload.buttons.map((b) => ({ text: b.title })),
+    });
+  } else {
+    await wati.sendText({ waId: founder.phone, text: payload.reply });
+  }
+
+  return {
+    reply: payload.reply,
+    ...(payload.buttons ? { buttons: payload.buttons } : {}),
+    cleanFinish: true,
+    iterations,
+  };
+}
