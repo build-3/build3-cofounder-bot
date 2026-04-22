@@ -1,6 +1,6 @@
 import { logger } from "../lib/logger.js";
 import { getLLM } from "../llm/index.js";
-import { AGENT_SYSTEM } from "../llm/prompts/agent_v1.js";
+import { AGENT_SYSTEM } from "../llm/prompts/agent_v2.js";
 import type { ToolCall } from "../llm/provider.js";
 import type { Founder } from "../identity/gate.js";
 import type { SearchStateRow } from "../conversation/store.js";

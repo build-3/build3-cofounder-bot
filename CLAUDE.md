@@ -67,7 +67,7 @@ See `docs/` for deeper detail:
 3. **Prompts are versioned.** All LLM prompts live under `src/llm/prompts/` with a version suffix (e.g. `refinement_v1.ts`). When you change a prompt, bump the version — don't edit in place. This lets us diff-test ranker quality.
 
    Current versions (live path):
-   - `agent_v1.ts` — Gemini function-calling agent (replaces voice/rerank/intent orchestration)
+   - `agent_v2.ts` — agent system prompt (tightened buttons + no-match + greeting rules)
    - `refinement_v3.ts` — user turn → `RefinementDelta` (used by `update_search_state` tool)
    - `rerank_v4.ts` — retrieval → ranked candidates (used by `find_cofounders` tool)
    - `explain_v1.ts` — 1-line rationale per card
