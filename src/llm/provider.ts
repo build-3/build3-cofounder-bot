@@ -21,6 +21,56 @@ export interface EmbedOptions {
   taskType?: "RETRIEVAL_QUERY" | "RETRIEVAL_DOCUMENT";
 }
 
+/** Parameters schema for a tool, expressed as a JSON Schema subset. */
+export interface ToolParameterSchema {
+  type: "object";
+  properties: Record<string, {
+    type: "string" | "number" | "boolean" | "array" | "object";
+    description?: string;
+    items?: { type: "string" | "number" | "boolean" };
+    enum?: string[];
+  }>;
+  required?: string[];
+}
+
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  parameters: ToolParameterSchema;
+}
+
+export interface ToolCall {
+  name: string;
+  args: Record<string, unknown>;
+}
+
+export interface AgentLoopOptions {
+  system: string;
+  messages: LLMMessage[];
+  tools: ToolDefinition[];
+  /** Callback the provider invokes when the model requests a tool. Must
+   *  return the tool's JSON-serialisable result, which is fed back as the
+   *  next model turn. */
+  onToolCall: (call: ToolCall) => Promise<unknown>;
+  /** Hard cap on tool iterations. Provider MUST stop after this many and
+   *  return whatever it has. */
+  maxIterations: number;
+  temperature?: number;
+  model?: string;
+}
+
+export interface AgentLoopResult {
+  /** True if the loop terminated because the model stopped calling tools
+   *  (natural completion). False if we hit maxIterations. */
+  completedNaturally: boolean;
+  /** Total tool calls executed. */
+  toolCallCount: number;
+  /** The final text output the model produced (may be empty if the model
+   *  only emitted tool calls). Agent code uses the `finish_turn` tool
+   *  call's args for the user-facing reply, not this field. */
+  finalText: string;
+}
+
 export interface LLMProvider {
   readonly name: "openai" | "gemini";
 
@@ -32,4 +82,9 @@ export interface LLMProvider {
 
   /** Batched embeddings. Returns one vector per input, same order. */
   embed(inputs: string[], opts?: EmbedOptions): Promise<number[][]>;
+
+  /** Run a function-calling agent loop. Provider orchestrates
+   *  model→tool→model turns, calling `onToolCall` for each request,
+   *  until the model stops calling tools or `maxIterations` is hit. */
+  agentLoop(opts: AgentLoopOptions): Promise<AgentLoopResult>;
 }
