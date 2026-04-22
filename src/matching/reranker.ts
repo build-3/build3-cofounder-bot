@@ -55,16 +55,13 @@ export interface RankedCandidate {
   sector_fit?: number;
 }
 
-const TOP_N_TO_RERANK = 8;
+const TOP_N_TO_RERANK = 5;
 const RETURN_TOP = 3;
-// Vercel caps serverless at 60s. LLM rerank is the single biggest time sink;
-// if it can't finish in this budget we abandon it and use the deterministic
-// fallback so the user still gets a card instead of a 504.
-const RERANK_TIMEOUT_MS = 25_000;
-// Output cap prevents the model from producing a partially-completed JSON blob
-// that blows past response_format=json_object's implicit budget. 8 candidates
-// × ~180 tokens of rationale/breakdown fits comfortably in 2k.
-const RERANK_MAX_TOKENS = 2000;
+// Vercel caps serverless at 60s. LLM rerank is the single biggest time sink.
+// 5 candidates fits in ~1k output tokens → completes in ~4s on gpt-4.1-mini.
+const RERANK_TIMEOUT_MS = 40_000;
+// 5 candidates × ~180 tokens comfortably fits in 1.5k.
+const RERANK_MAX_TOKENS = 1500;
 
 function normalize(text: string): string {
   return text.toLowerCase();
