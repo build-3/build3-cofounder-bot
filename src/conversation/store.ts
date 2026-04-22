@@ -112,6 +112,23 @@ export async function getSearchState(
   };
 }
 
+export async function getRecentTurns(
+  conversationId: string,
+  limit = 12,
+  sql: Sql = getSql(),
+): Promise<Array<{ direction: "in" | "out"; text: string }>> {
+  const rows = await sql<Array<{ direction: "in" | "out"; text: string | null }>>`
+    SELECT direction, text
+    FROM turns
+    WHERE conversation_id = ${conversationId}
+    ORDER BY created_at DESC
+    LIMIT ${limit}
+  `;
+  return rows
+    .reverse()
+    .map((r) => ({ direction: r.direction, text: r.text ?? "" }));
+}
+
 export async function writeSearchState(
   next: SearchStateRow,
   sql: Sql = getSql(),
