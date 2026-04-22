@@ -226,6 +226,14 @@ export const geminiProvider: LLMProvider = {
           contents: history,
           systemInstruction,
           tools: toolsToGeminiFormat(opts.tools),
+          // Force Gemini to emit a function call every step. Without this, the
+          // model can respond with free text (no functionCall) and the loop
+          // returns cleanly with no finish_turn — the runAgent caller then
+          // has no payload and falls back to "Hit a snag". Seen in prod with
+          // the real system prompt despite a "MUST call finish_turn" instruction.
+          toolConfig: {
+            functionCallingConfig: { mode: "ANY" },
+          },
           generationConfig: {
             temperature: opts.temperature ?? 0.9,
           },

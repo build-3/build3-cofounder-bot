@@ -58,6 +58,7 @@ export async function runAgent(args: RunAgentArgs): Promise<AgentTurnResult> {
 
   let finishedPayload: { reply: string; buttons?: AgentButton[] } | null = null;
   let iterations = 0;
+  let modelFinalText = "";
 
   try {
     const [state, recentTurns, shownIds] = await Promise.all([
@@ -123,25 +124,36 @@ export async function runAgent(args: RunAgentArgs): Promise<AgentTurnResult> {
       temperature: 0.9,
     });
     iterations = result.toolCallCount;
+    modelFinalText = result.finalText ?? "";
   } catch (err) {
     logger.error({ err, convId: conversationId }, "agent loop threw");
   }
 
   if (!finishedPayload) {
-    logger.warn({ convId: conversationId, iterations }, "agent did not call finish_turn — falling back");
-    await wati.sendText({ waId: founder.phone, text: FALLBACK_REPLY });
+    // If the model emitted free text but skipped finish_turn, surface that
+    // text rather than the static "Hit a snag" — a bad reply is still better
+    // than a degraded one. Falls back to the static message only on hard
+    // errors where we have nothing.
+    const rescueText = modelFinalText.trim();
+    const reply = rescueText || FALLBACK_REPLY;
+    const intent = rescueText ? "agent-rescue" : "agent-fallback";
+    logger.warn(
+      { convId: conversationId, iterations, usedRescueText: Boolean(rescueText) },
+      "agent did not call finish_turn — falling back",
+    );
+    await wati.sendText({ waId: founder.phone, text: reply });
     // Persist the fallback reply too — otherwise the agent on the next turn
     // has no idea it just dropped a degraded reply and may repeat itself.
     try {
       await deps.insertOutboundTurn({
         conversationId,
-        text: FALLBACK_REPLY,
-        intent: "agent-fallback",
+        text: reply,
+        intent,
       });
     } catch (err) {
       logger.warn({ err, convId: conversationId }, "failed to persist fallback outbound turn");
     }
-    return { reply: FALLBACK_REPLY, cleanFinish: false, iterations };
+    return { reply, cleanFinish: false, iterations };
   }
 
   const payload: { reply: string; buttons?: AgentButton[] } = finishedPayload;
