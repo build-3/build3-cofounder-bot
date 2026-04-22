@@ -37,6 +37,12 @@ export interface RunAgentDeps {
   markShownAction: (convId: string, founderId: string, action: "accepted" | "skipped") => Promise<void>;
   fetchFounderDetail: (id: string) => Promise<FounderDetail | null>;
   propose: (args: { requesterId: string; targetId: string; requesterNote: string }) => Promise<void>;
+  /**
+   * Persist the outbound reply to the `turns` table. Called after a successful
+   * WATI send so the agent sees its own replies in `getRecentTurns` on the
+   * next turn and doesn't re-ask questions it already asked.
+   */
+  insertOutboundTurn: (args: { conversationId: string; text: string; intent?: string }) => Promise<void>;
 }
 
 export interface RunAgentArgs {
@@ -124,6 +130,17 @@ export async function runAgent(args: RunAgentArgs): Promise<AgentTurnResult> {
   if (!finishedPayload) {
     logger.warn({ convId: conversationId, iterations }, "agent did not call finish_turn — falling back");
     await wati.sendText({ waId: founder.phone, text: FALLBACK_REPLY });
+    // Persist the fallback reply too — otherwise the agent on the next turn
+    // has no idea it just dropped a degraded reply and may repeat itself.
+    try {
+      await deps.insertOutboundTurn({
+        conversationId,
+        text: FALLBACK_REPLY,
+        intent: "agent-fallback",
+      });
+    } catch (err) {
+      logger.warn({ err, convId: conversationId }, "failed to persist fallback outbound turn");
+    }
     return { reply: FALLBACK_REPLY, cleanFinish: false, iterations };
   }
 
@@ -137,6 +154,19 @@ export async function runAgent(args: RunAgentArgs): Promise<AgentTurnResult> {
     });
   } else {
     await wati.sendText({ waId: founder.phone, text: payload.reply });
+  }
+
+  // Persist after send — if the send throws, the loop also throws and we
+  // correctly don't record an outbound that never went. Persistence failure
+  // here shouldn't block the reply (user already got it) but should log.
+  try {
+    await deps.insertOutboundTurn({
+      conversationId,
+      text: payload.reply,
+      intent: "agent",
+    });
+  } catch (err) {
+    logger.warn({ err, convId: conversationId }, "failed to persist outbound turn");
   }
 
   return {

@@ -100,6 +100,7 @@ describe("runAgent", () => {
         markShownAction: async () => undefined,
         fetchFounderDetail: async () => null,
         propose: async () => undefined,
+        insertOutboundTurn: async () => undefined,
       },
     });
 
@@ -141,6 +142,7 @@ describe("runAgent", () => {
         markShownAction: async () => undefined,
         fetchFounderDetail: async () => null,
         propose: async () => undefined,
+        insertOutboundTurn: async () => undefined,
       },
     });
 
@@ -182,11 +184,102 @@ describe("runAgent", () => {
         markShownAction: async () => undefined,
         fetchFounderDetail: async () => null,
         propose: async () => undefined,
+        insertOutboundTurn: async () => undefined,
       },
     });
 
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatch(/snag/i);
+    __setLLMForTests(null);
+  });
+
+  it("persists outbound reply after successful send", async () => {
+    const outbound: Array<{ text: string; intent?: string }> = [];
+    const wati = {
+      sendText: vi.fn(async () => undefined),
+      sendButtons: vi.fn(async () => undefined),
+    };
+    const fakeLLM: Partial<LLMProvider> = {
+      agentLoop: async (opts) => {
+        await opts.onToolCall({
+          name: "finish_turn",
+          args: { reply: "Got it — what sector?" },
+        });
+        return { completedNaturally: true, toolCallCount: 1, finalText: "" };
+      },
+    };
+    __setLLMForTests(fakeLLM as LLMProvider);
+
+    await runAgent({
+      founder: fakeFounder(),
+      conversationId: "conv-1",
+      userTurn: "find me a cofounder",
+      wati: wati as never,
+      deps: {
+        getSearchState: async () => ({
+          conversationId: "conv-1",
+          role: null, sector: [], stage: [], location: [],
+          seniority: null, mustHave: [], niceToHave: [], antiPrefs: [],
+        }),
+        writeSearchState: async () => undefined,
+        getRecentTurns: async () => [],
+        getShownFounderIds: async () => [],
+        runMatching: async () => ({ cards: [], retrieved: [] }),
+        recordShown: async () => true,
+        markShownAction: async () => undefined,
+        fetchFounderDetail: async () => null,
+        propose: async () => undefined,
+        insertOutboundTurn: async (args) => {
+          outbound.push({ text: args.text, ...(args.intent ? { intent: args.intent } : {}) });
+        },
+      },
+    });
+
+    expect(outbound).toHaveLength(1);
+    expect(outbound[0]?.text).toBe("Got it — what sector?");
+    expect(outbound[0]?.intent).toBe("agent");
+    __setLLMForTests(null);
+  });
+
+  it("persists outbound reply on fallback path too", async () => {
+    const outbound: Array<{ text: string; intent?: string }> = [];
+    const wati = {
+      sendText: vi.fn(async () => undefined),
+      sendButtons: vi.fn(),
+    };
+    const fakeLLM: Partial<LLMProvider> = {
+      agentLoop: async () => { throw new Error("boom"); },
+    };
+    __setLLMForTests(fakeLLM as LLMProvider);
+
+    await runAgent({
+      founder: fakeFounder(),
+      conversationId: "conv-1",
+      userTurn: "hi",
+      wati: wati as never,
+      deps: {
+        getSearchState: async () => ({
+          conversationId: "conv-1",
+          role: null, sector: [], stage: [], location: [],
+          seniority: null, mustHave: [], niceToHave: [], antiPrefs: [],
+        }),
+        writeSearchState: async () => undefined,
+        getRecentTurns: async () => [],
+        getShownFounderIds: async () => [],
+        runMatching: async () => ({ cards: [], retrieved: [] }),
+        recordShown: async () => true,
+        markShownAction: async () => undefined,
+        fetchFounderDetail: async () => null,
+        propose: async () => undefined,
+        insertOutboundTurn: async (args) => {
+          outbound.push({ text: args.text, ...(args.intent ? { intent: args.intent } : {}) });
+        },
+      },
+    });
+
+    expect(outbound).toHaveLength(1);
+    expect(outbound[0]?.intent).toBe("agent-fallback");
+    expect(outbound[0]?.text).toMatch(/snag/i);
     __setLLMForTests(null);
   });
 });

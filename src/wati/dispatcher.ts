@@ -6,6 +6,7 @@ import {
   getSearchState,
   getRecentTurns,
   insertInboundTurn,
+  insertOutboundTurn,
   writeSearchState,
 } from "../conversation/store.js";
 import {
@@ -113,6 +114,7 @@ export async function dispatchInbound(msg: WatiInbound, deps: DispatchDeps): Pro
         recordShown,
         markShownAction,
         fetchFounderDetail: fetchFounderById,
+        insertOutboundTurn,
         propose: async (args) => {
           await propose({ ...args, wati: deps.wati });
         },
