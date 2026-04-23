@@ -5,7 +5,7 @@ import {
   SEARCH_INTENT_SYSTEM,
   buildSearchIntentUserPrompt,
   type SearchIntentInput,
-} from "../llm/prompts/search_intent_v1.js";
+} from "../llm/prompts/search_intent_v2.js";
 
 /**
  * LLM-derived filters the retriever can push directly into the SQL query.
@@ -45,7 +45,7 @@ export async function resolveSearchIntent(input: SearchIntentInput): Promise<Sea
     return await getLLM().json({
       system: SEARCH_INTENT_SYSTEM,
       user: buildSearchIntentUserPrompt(input),
-      schemaName: "search_intent_v1",
+      schemaName: "search_intent_v2",
       temperature: 0,
       parse: (raw) => SearchIntentSchema.parse(JSON.parse(raw)),
     });
@@ -54,9 +54,9 @@ export async function resolveSearchIntent(input: SearchIntentInput): Promise<Sea
     return {
       role_tags: input.currentState.role ? [input.currentState.role] : [],
       role_tags_must_not: [],
-      sector_tags: input.currentState.sector,
-      stage_tags: input.currentState.stage,
-      cities: input.currentState.location,
+      sector_tags: [],
+      stage_tags: [],
+      cities: [],
       seniority: input.currentState.seniority,
       semantic_query: input.userTurn,
       notes: ["fallback: LLM failed"],
