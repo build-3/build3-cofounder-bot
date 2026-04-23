@@ -9,6 +9,7 @@ export interface CandidateCard {
   name: string;
   city: string;
   headline: string;
+  summary: string;
   /** Reranker score. Carried through to support the two-card confidence
    *  gate (runner-up must be within 60% of the top). */
   score: number;
@@ -68,6 +69,7 @@ export async function runMatching(args: {
         name: c.name,
         city: c.city,
         headline: c.headline,
+        summary: c.summary,
         score: r.score,
         rationale: r.rationale,
         bullets: r.bullets,

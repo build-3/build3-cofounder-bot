@@ -5,7 +5,6 @@ import type { CandidateCard, RankedResult } from "../../matching/pipeline.js";
 
 const FindCofoundersInputSchema = z.object({
   query: z.string().min(1),
-  limit: z.number().int().min(1).optional(),
 });
 
 export interface FindCofoundersDeps {
@@ -27,12 +26,18 @@ export interface FindCofoundersFounder {
   name: string;
   city: string;
   headline: string;
+  summary: string;
+  bullets: string[];
   rationale: string;
+  sector_tags: string[];
+  stage_tags: string[];
+  seniority: string;
+  years_exp: number;
   fit: "warm" | "hold";
 }
 
 export interface FindCofoundersResult {
-  founders: FindCofoundersFounder[];
+  founder: FindCofoundersFounder | null;
   message?: string;
 }
 
@@ -41,7 +46,6 @@ export async function handleFindCofounders(
   deps: FindCofoundersDeps,
 ): Promise<FindCofoundersResult> {
   const parsed = FindCofoundersInputSchema.parse(input);
-  const limit = Math.min(parsed.limit ?? 3, 5);
 
   const state = await deps.getState(deps.conversationId);
   const shown = await deps.getShownFounderIds(deps.conversationId);
@@ -53,25 +57,32 @@ export async function handleFindCofounders(
     alreadyShownFounderIds: shown,
   });
 
-  const top = cards.slice(0, limit);
-  if (top.length === 0) {
+  const top = cards[0];
+  if (!top) {
     return {
-      founders: [],
+      founder: null,
       message: "No matches in the cohort for this ask.",
     };
   }
 
-  await deps.recordShown(deps.conversationId, top);
+  // Record only the single card we're showing
+  await deps.recordShown(deps.conversationId, [top]);
 
   return {
-    founders: top.map((c) => ({
-      id: c.founder_id,
-      name: c.name,
-      city: c.city,
-      headline: c.headline,
-      rationale: c.rationale,
-      fit: c.intro_recommendation,
-    })),
+    founder: {
+      id: top.founder_id,
+      name: top.name,
+      city: top.city,
+      headline: top.headline,
+      summary: top.summary,
+      bullets: top.bullets,
+      rationale: top.rationale,
+      sector_tags: top.sector_tags,
+      stage_tags: top.stage_tags,
+      seniority: top.seniority,
+      years_exp: top.years_exp,
+      fit: top.intro_recommendation,
+    },
   };
 }
 
@@ -82,10 +93,6 @@ export const findCofoundersSchema: ToolParameterSchema = {
       type: "string",
       description:
         "Natural-language description of who the user is looking for. Paraphrase the user's own words.",
-    },
-    limit: {
-      type: "number",
-      description: "How many candidates to return (default 3, max 5).",
     },
   },
   required: ["query"],
