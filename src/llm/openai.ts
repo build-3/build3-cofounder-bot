@@ -38,13 +38,14 @@ export const openaiProvider: LLMProvider = {
     return res.choices[0]?.message?.content ?? "";
   },
 
-  async json<T>({ system, user, schemaName, parse, temperature, maxTokens }: JsonCallOptions<T>): Promise<T> {
+  async json<T>({ system, user, schemaName, parse, temperature, maxTokens, model }: JsonCallOptions<T>): Promise<T> {
     const cfg = loadConfig();
+    const useModel = model ?? cfg.OPENAI_MODEL_CHAT;
     // One retry on parse failure before callers fall back to a deterministic path.
     let lastErr: unknown;
     for (let attempt = 1; attempt <= 2; attempt++) {
       const res = await client().chat.completions.create({
-        model: cfg.OPENAI_MODEL_CHAT,
+        model: useModel,
         response_format: { type: "json_object" },
         temperature: temperature ?? 0,
         ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),

@@ -9,13 +9,24 @@ const schema = z.object({
   DATABASE_URL: z.string().min(1),
 
   OPENAI_API_KEY: z.string().min(1).optional(),
-  OPENAI_MODEL_RERANK: z.string().default("gpt-4.1"),
+  // Rerank uses a smaller model — structured-JSON over 5 candidates fits in a
+  // 1.5K-token output budget and gpt-4.1-mini comes back in ~3-4s vs ~10s+
+  // for full gpt-4.1, with no observable rerank-quality regression on our
+  // golden set. The agent loop stays on the larger model where conversational
+  // nuance pays off.
+  OPENAI_MODEL_RERANK: z.string().default("gpt-4.1-mini"),
   OPENAI_MODEL_CHAT: z.string().default("gpt-4.1"),
   OPENAI_MODEL_EMBED: z.string().default("text-embedding-3-small"),
 
   GOOGLE_AI_KEY: z.string().min(1).optional(),
   GEMINI_MODEL_CHAT: z.string().default("gemini-2.5-flash"),
-  GEMINI_MODEL_AGENT: z.string().default("gemini-2.5-pro"),
+  // Agent loop default is flash — orchestrating 5 well-defined tool calls
+  // does not need pro-tier reasoning, and pro adds 2-3s of latency per turn
+  // which compounds across the agent's typical 2-iteration cycle. Override
+  // to gemini-2.5-pro via env if quality regresses for a specific cohort.
+  GEMINI_MODEL_AGENT: z.string().default("gemini-2.5-flash"),
+  // Rerank can run on flash-lite — same JSON-mode call, much cheaper and faster.
+  GEMINI_MODEL_RERANK: z.string().default("gemini-2.5-flash-lite"),
   GEMINI_MODEL_EMBED: z.string().default("gemini-embedding-001"),
 
   LLM_PROVIDER: z.enum(["openai", "gemini"]).default("gemini"),

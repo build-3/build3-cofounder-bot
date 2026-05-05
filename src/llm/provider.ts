@@ -15,6 +15,10 @@ export interface JsonCallOptions<T> {
   parse: (raw: string) => T;
   temperature?: number;
   maxTokens?: number;
+  /** Override the provider's default chat model for this call. Used by the
+   *  reranker so structured-JSON calls can run on a smaller, faster model
+   *  than the conversational agent. */
+  model?: string;
 }
 
 export interface EmbedOptions {

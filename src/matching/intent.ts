@@ -1,11 +1,24 @@
 import { z } from "zod";
 import { getLLM } from "../llm/index.js";
+import { loadConfig } from "../lib/config.js";
 import { logger } from "../lib/logger.js";
 import {
   SEARCH_INTENT_SYSTEM,
   buildSearchIntentUserPrompt,
   type SearchIntentInput,
 } from "../llm/prompts/search_intent_v2.js";
+
+function intentModel(): string | undefined {
+  // Same logic as the reranker. Wrapped because tests stub the LLM provider
+  // without bringing up env vars; undefined falls through to the provider
+  // default, which the stub ignores anyway.
+  try {
+    const cfg = loadConfig();
+    return cfg.LLM_PROVIDER === "openai" ? cfg.OPENAI_MODEL_RERANK : cfg.GEMINI_MODEL_RERANK;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * LLM-derived filters the retriever can push directly into the SQL query.
@@ -42,11 +55,13 @@ const SearchIntentSchema = z.object({
  */
 export async function resolveSearchIntent(input: SearchIntentInput): Promise<SearchIntent> {
   try {
+    const model = intentModel();
     return await getLLM().json({
       system: SEARCH_INTENT_SYSTEM,
       user: buildSearchIntentUserPrompt(input),
       schemaName: "search_intent_v2",
       temperature: 0,
+      ...(model ? { model } : {}),
       parse: (raw) => SearchIntentSchema.parse(JSON.parse(raw)),
     });
   } catch (err) {

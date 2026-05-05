@@ -104,10 +104,11 @@ function toolsToGeminiFormat(tools: ToolDefinition[]) {
 
 async function generate(
   messages: LLMMessage[],
-  opts?: { temperature?: number; maxTokens?: number; responseMimeType?: string },
+  opts?: { temperature?: number; maxTokens?: number; responseMimeType?: string; model?: string },
 ): Promise<string> {
   const cfg = loadConfig();
-  const response = await fetch(`${API_ROOT}/models/${cfg.GEMINI_MODEL_CHAT}:generateContent`, {
+  const useModel = opts?.model ?? cfg.GEMINI_MODEL_CHAT;
+  const response = await fetch(`${API_ROOT}/models/${useModel}:generateContent`, {
     method: "POST",
     headers: buildHeaders(),
     body: JSON.stringify({
@@ -139,15 +140,16 @@ export const geminiProvider: LLMProvider = {
     return await generate(messages, config);
   },
 
-  async json<T>({ system, user, schemaName, parse, temperature, maxTokens }: JsonCallOptions<T>): Promise<T> {
+  async json<T>({ system, user, schemaName, parse, temperature, maxTokens, model }: JsonCallOptions<T>): Promise<T> {
     let lastErr: unknown;
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
-        const config: { temperature?: number; maxTokens?: number; responseMimeType: string } = {
+        const config: { temperature?: number; maxTokens?: number; responseMimeType: string; model?: string } = {
           responseMimeType: "application/json",
         };
         config.temperature = temperature ?? 0;
         if (maxTokens !== undefined) config.maxTokens = maxTokens;
+        if (model) config.model = model;
         const raw = await generate(
           [
             { role: "system", content: system },
