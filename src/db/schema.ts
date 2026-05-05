@@ -1,4 +1,5 @@
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -44,6 +45,10 @@ export const founders = pgTable(
      *  is intentionally not enforced — a perfect match still wins. */
     timesShown: integer("times_shown").notNull().default(0),
     lastShownAt: timestamp("last_shown_at", { withTimezone: true }),
+    /** Telegram identity. Both nullable until the founder messages the bot.
+     *  See migration 0004 — partial unique index, multiple NULLs allowed. */
+    telegramUsername: text("telegram_username"),
+    telegramChatId: bigint("telegram_chat_id", { mode: "number" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({

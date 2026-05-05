@@ -24,7 +24,18 @@ import { WatiInboundSchema } from "./types.js";
  */
 export const watiWebhookRoute: FastifyPluginAsync = async (app: FastifyInstance) => {
   const cfg = loadConfig();
+  // Self-gate when WATI secrets aren't configured (we're in TRANSPORT=telegram
+  // mode). The route still exists so Telegram-era deployments can roll back
+  // to WATI by flipping env vars — but until then it 503s every request.
+  if (!cfg.WATI_API_TOKEN || !cfg.WATI_WEBHOOK_SECRET || !cfg.WATI_API_BASE_URL) {
+    logger.info("WATI secrets missing — /webhooks/wati will 503 all traffic");
+    app.post("/wati", async (_req, reply) => {
+      reply.code(503).send({ error: "WATI_NOT_CONFIGURED" });
+    });
+    return;
+  }
   const wati = createWatiClient();
+  const watiSecret = cfg.WATI_WEBHOOK_SECRET; // narrow once for downstream use
 
   app.post("/wati", async (req, reply) => {
     if (cfg.KILL_SWITCH) {
@@ -47,7 +58,7 @@ export const watiWebhookRoute: FastifyPluginAsync = async (app: FastifyInstance)
     }
     const provided =
       typeof headerSecret === "string" ? headerSecret : (querySecret ?? urlSecret);
-    if (provided !== cfg.WATI_WEBHOOK_SECRET) {
+    if (provided !== watiSecret) {
       logger.warn(
         {
           url: req.url,
@@ -55,7 +66,7 @@ export const watiWebhookRoute: FastifyPluginAsync = async (app: FastifyInstance)
           hasQuery: typeof querySecret === "string",
           hasUrlParsed: typeof urlSecret === "string",
           providedLen: typeof provided === "string" ? provided.length : 0,
-          expectedLen: cfg.WATI_WEBHOOK_SECRET.length,
+          expectedLen: watiSecret.length,
         },
         "webhook secret mismatch",
       );

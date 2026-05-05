@@ -31,10 +31,23 @@ const schema = z.object({
 
   LLM_PROVIDER: z.enum(["openai", "gemini"]).default("gemini"),
 
-  WATI_API_BASE_URL: z.string().url(),
-  WATI_API_TOKEN: z.string().min(1),
-  WATI_WEBHOOK_SECRET: z.string().min(8),
+  WATI_API_BASE_URL: z.string().url().optional(),
+  WATI_API_TOKEN: z.string().min(1).optional(),
+  WATI_WEBHOOK_SECRET: z.string().min(8).optional(),
   WATI_REOPEN_TEMPLATE: z.string().default("cofounder_reopen_v1"),
+
+  // Telegram transport. Bot token from @BotFather; webhook secret is a
+  // shared-secret string we tell Telegram to send back as the
+  // X-Telegram-Bot-Api-Secret-Token header on every webhook delivery.
+  // Both required when TRANSPORT='telegram' (the default going forward);
+  // optional otherwise so legacy WATI-only deployments still boot.
+  TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
+  TELEGRAM_WEBHOOK_SECRET: z.string().min(8).optional(),
+
+  // Which transport is "live". Both webhooks always register and reject
+  // unauthorized traffic; this flag only controls feature defaults and
+  // makes mis-config (e.g. forgetting to set TELEGRAM_*) fail fast.
+  TRANSPORT: z.enum(["wati", "telegram"]).default("telegram"),
 
   ADMIN_TOKEN: z.string().min(8),
   CONSENT_EXPIRY_HOURS: z.coerce.number().int().positive().default(72),
@@ -56,6 +69,27 @@ const schema = z.object({
       code: z.ZodIssueCode.custom,
       path: ["GOOGLE_AI_KEY"],
       message: "required when LLM_PROVIDER=gemini",
+    });
+  }
+  if (value.TRANSPORT === "telegram" && !value.TELEGRAM_BOT_TOKEN) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["TELEGRAM_BOT_TOKEN"],
+      message: "required when TRANSPORT=telegram",
+    });
+  }
+  if (value.TRANSPORT === "telegram" && !value.TELEGRAM_WEBHOOK_SECRET) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["TELEGRAM_WEBHOOK_SECRET"],
+      message: "required when TRANSPORT=telegram",
+    });
+  }
+  if (value.TRANSPORT === "wati" && !value.WATI_API_BASE_URL) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["WATI_API_BASE_URL"],
+      message: "required when TRANSPORT=wati",
     });
   }
 });

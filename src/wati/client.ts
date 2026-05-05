@@ -43,9 +43,15 @@ async function withRetry(fn: () => Promise<Response>, label: string): Promise<Re
 
 export function createWatiClient(): WatiClient {
   const cfg = loadConfig();
-  const token = cfg.WATI_API_TOKEN.startsWith("Bearer ")
-    ? cfg.WATI_API_TOKEN
-    : `Bearer ${cfg.WATI_API_TOKEN}`;
+  // Hard-fail if any caller wires this up under TRANSPORT=telegram without
+  // WATI secrets — the route guard in webhook.ts already covers the inbound
+  // path; this protects programmatic callers (tests, expiry job).
+  if (!cfg.WATI_API_TOKEN || !cfg.WATI_API_BASE_URL) {
+    throw new Error("createWatiClient called without WATI_API_TOKEN / WATI_API_BASE_URL");
+  }
+  const apiToken = cfg.WATI_API_TOKEN;
+  const apiBase = cfg.WATI_API_BASE_URL;
+  const token = apiToken.startsWith("Bearer ") ? apiToken : `Bearer ${apiToken}`;
   const headers = {
     Authorization: token,
     "Content-Type": "application/json",
@@ -68,7 +74,7 @@ export function createWatiClient(): WatiClient {
   return {
     async sendText({ waId, text }) {
       if (!guard(waId, "sendText")) return;
-      const url = `${cfg.WATI_API_BASE_URL}/api/v1/sendSessionMessage/${encodeURIComponent(waId)}?messageText=${encodeURIComponent(text)}`;
+      const url = `${apiBase}/api/v1/sendSessionMessage/${encodeURIComponent(waId)}?messageText=${encodeURIComponent(text)}`;
       await withRetry(
         () => fetch(url, { method: "POST", headers }),
         "WATI.sendText",
@@ -80,7 +86,7 @@ export function createWatiClient(): WatiClient {
         throw new Error(`WATI allows 1–3 interactive buttons; got ${buttons.length}`);
       }
       if (!guard(waId, "sendButtons")) return;
-      const url = `${cfg.WATI_API_BASE_URL}/api/v1/sendInteractiveButtonsMessage?whatsappNumber=${encodeURIComponent(waId)}`;
+      const url = `${apiBase}/api/v1/sendInteractiveButtonsMessage?whatsappNumber=${encodeURIComponent(waId)}`;
       await withRetry(
         () =>
           fetch(url, {
@@ -99,7 +105,7 @@ export function createWatiClient(): WatiClient {
 
     async sendTemplate({ waId, templateName, parameters }) {
       if (!guard(waId, "sendTemplate")) return;
-      const url = `${cfg.WATI_API_BASE_URL}/api/v1/sendTemplateMessage?whatsappNumber=${encodeURIComponent(waId)}`;
+      const url = `${apiBase}/api/v1/sendTemplateMessage?whatsappNumber=${encodeURIComponent(waId)}`;
       await withRetry(
         () =>
           fetch(url, {
