@@ -4,6 +4,7 @@ import rateLimit from "@fastify/rate-limit";
 import { loadConfig } from "./lib/config.js";
 import { AppError } from "./lib/errors.js";
 import { watiWebhookRoute } from "./wati/webhook.js";
+import { telegramWebhookRoute } from "./telegram/webhook.js";
 import { adminRoutes } from "./admin/routes.js";
 
 // buildServer is pure construction. No app.listen, no side-effect timers —
@@ -41,7 +42,12 @@ export async function buildServer(): Promise<{ app: FastifyInstance; cfg: Return
 
   app.get("/healthz", async () => ({ ok: true, ts: new Date().toISOString() }));
 
+  // Both transports register independently. Each gates itself on its own
+  // env vars, so booting with only one configured (e.g. TRANSPORT=telegram
+  // and no WATI secrets) still works — the unconfigured route 503s
+  // gracefully and the configured one serves traffic.
   await app.register(watiWebhookRoute, { prefix: "/webhooks" });
+  await app.register(telegramWebhookRoute, { prefix: "/webhooks" });
   await app.register(adminRoutes, { prefix: "/admin" });
 
   return { app, cfg };

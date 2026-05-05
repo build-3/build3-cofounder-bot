@@ -6,12 +6,17 @@
 import { buildServer } from "./server.js";
 import { startExpiryJob } from "./consent/expiries.js";
 import { createWatiClient } from "./wati/client.js";
+import { createTelegramClient } from "./telegram/client.js";
 
 async function main(): Promise<void> {
   const { app, cfg } = await buildServer();
   // Consent expiry job runs in-process every 15 min (local only — on Vercel
   // this will be replaced by a Vercel Cron hitting /admin/run-expiries).
-  startExpiryJob(createWatiClient());
+  // Pick the client matching the active TRANSPORT — both implement the
+  // WatiClient surface that startExpiryJob expects.
+  const client =
+    cfg.TRANSPORT === "telegram" ? createTelegramClient() : createWatiClient();
+  startExpiryJob(client);
   try {
     await app.listen({ port: cfg.PORT, host: "0.0.0.0" });
   } catch (err) {
