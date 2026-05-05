@@ -11,22 +11,27 @@ function card(overrides: Partial<CandidateCard> = {}): CandidateCard {
     name: "Asha Kumar",
     city: "Bangalore",
     headline: "Enterprise sales lead",
+    summary: "8 yrs B2B sales. Looking for a technical cofounder in fintech.",
     rationale: "Strong B2B overlap",
     bullets: ["8 yrs B2B sales"],
     drawback: "",
     intro_recommendation: "warm",
     hold_reason: "",
-    score: 9,
+    score: 78,
     seniority: "founder-level",
     years_exp: 8,
     sector_tags: ["b2b-saas"],
     stage_tags: ["seed"],
+    match_score: 78,
+    breakdown: { role_fit: 3, sector_fit: 2 },
+    headline_evidence: ["Enterprise sales lead"],
+    times_shown: 0,
     ...overrides,
   };
 }
 
 describe("find_cofounders tool", () => {
-  it("returns stripped candidate summaries", async () => {
+  it("returns the top single card with rich detail + match score", async () => {
     const runMatching = vi.fn<[unknown], Promise<RankedResult>>().mockResolvedValue({
       cards: [card()],
       retrieved: [],
@@ -34,7 +39,7 @@ describe("find_cofounders tool", () => {
     const recordShown = vi.fn().mockResolvedValue(true);
 
     const result = await handleFindCofounders(
-      { query: "find me a sales cofounder", limit: 3 },
+      { query: "find me a sales cofounder" },
       {
         requesterId: "req-1",
         conversationId: "conv-1",
@@ -49,19 +54,23 @@ describe("find_cofounders tool", () => {
       },
     );
 
-    expect(result.founders).toHaveLength(1);
-    expect(result.founders[0]).toEqual({
+    expect(result.founder).not.toBeNull();
+    expect(result.founder).toMatchObject({
       id: "founder-1",
       name: "Asha Kumar",
       city: "Bangalore",
       headline: "Enterprise sales lead",
       rationale: "Strong B2B overlap",
       fit: "warm",
+      match_score: 78,
+      breakdown: { role_fit: 3, sector_fit: 2 },
+      headline_evidence: ["Enterprise sales lead"],
+      times_shown: 0,
     });
     expect(recordShown).toHaveBeenCalledOnce();
   });
 
-  it("returns empty list + message when no candidates match", async () => {
+  it("returns founder=null + message when no candidates match", async () => {
     const result = await handleFindCofounders(
       { query: "defence tech cofounder" },
       {
@@ -78,15 +87,16 @@ describe("find_cofounders tool", () => {
       },
     );
 
-    expect(result.founders).toHaveLength(0);
+    expect(result.founder).toBeNull();
     expect(result.message).toMatch(/no matches/i);
   });
 
-  it("caps limit at 5 even if agent asks for more", async () => {
+  it("only shows the top candidate even when many were ranked", async () => {
     const manyCards = Array.from({ length: 10 }, (_, i) =>
       card({ founder_id: `f-${i}`, name: `F ${i}` }));
+    const recordShown = vi.fn().mockResolvedValue(true);
     const result = await handleFindCofounders(
-      { query: "any", limit: 9 },
+      { query: "any" },
       {
         requesterId: "req-1",
         conversationId: "conv-1",
@@ -97,10 +107,15 @@ describe("find_cofounders tool", () => {
         }),
         getShownFounderIds: vi.fn().mockResolvedValue([]),
         runMatching: vi.fn().mockResolvedValue({ cards: manyCards, retrieved: [] }),
-        recordShown: vi.fn().mockResolvedValue(true),
+        recordShown,
       },
     );
-    expect(result.founders.length).toBeLessThanOrEqual(5);
+    expect(result.founder).not.toBeNull();
+    expect(result.founder?.id).toBe("f-0");
+    // Only the top card is recorded as shown.
+    expect(recordShown).toHaveBeenCalledOnce();
+    const recordedCards = recordShown.mock.calls[0]?.[1] as CandidateCard[];
+    expect(recordedCards).toHaveLength(1);
   });
 
   it("has a Gemini tool schema", () => {

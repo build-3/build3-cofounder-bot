@@ -22,6 +22,7 @@ function makeCandidate(id: string, overrides: Partial<RetrievedCandidate> = {}):
     seniority: "founder-level",
     years_exp: 12,
     distance: 0.12,
+    times_shown: 0,
     ...overrides,
   };
 }
