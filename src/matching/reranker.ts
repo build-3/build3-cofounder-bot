@@ -1,13 +1,39 @@
 import { z } from "zod";
 import { getLLM } from "../llm/index.js";
+import { loadConfig } from "../lib/config.js";
 import { logger } from "../lib/logger.js";
 import {
   buildRerankUserPrompt,
   RERANK_SYSTEM,
   type RerankCandidate,
-} from "../llm/prompts/rerank_v4.js";
+} from "../llm/prompts/rerank_v5.js";
 import type { SearchStateRow } from "../conversation/store.js";
 import type { RetrievedCandidate } from "./retriever.js";
+
+function rerankModel(): string | undefined {
+  // Tests stub the LLM provider before calling rerank, but they don't bring
+  // up the full env. loadConfig() throws on missing required envs, so we
+  // swallow that here — undefined falls through to the provider's default
+  // chat model, which is the right behavior in tests.
+  try {
+    const cfg = loadConfig();
+    return cfg.LLM_PROVIDER === "openai" ? cfg.OPENAI_MODEL_RERANK : cfg.GEMINI_MODEL_RERANK;
+  } catch {
+    return undefined;
+  }
+}
+
+const BreakdownSchema = z
+  .object({
+    role_fit: z.number(),
+    reciprocal_fit: z.number(),
+    sector_fit: z.number(),
+    stage_fit: z.number(),
+    location_fit: z.number(),
+    anti_pref: z.number(),
+  })
+  .partial()
+  .optional();
 
 const RerankOutputSchema = z.object({
   ranked: z.array(
@@ -15,29 +41,32 @@ const RerankOutputSchema = z.object({
       founder_id: z.string().uuid(),
       score: z.number(),
       rationale: z.string().min(1).max(280),
-      // v3: bullets + drawback. Defaulted so a v2-shaped response (no
-      // bullets) still parses — the card will just fall back to rationale.
       bullets: z.array(z.string().max(200)).max(4).default([]),
       drawback: z.string().max(240).default(""),
-      // v4: hold/warm intro recommendation. Defaulted to "warm" so a v3-shaped
-      // response (no recommendation) still parses and renders as a normal
-      // warm card.
       intro_recommendation: z.enum(["warm", "hold"]).default("warm"),
       hold_reason: z.string().max(260).default(""),
-      breakdown: z
-        .object({
-          role_fit: z.number(),
-          reciprocal_fit: z.number(),
-          sector_fit: z.number(),
-          stage_fit: z.number(),
-          location_fit: z.number(),
-          anti_pref: z.number(),
-        })
-        .partial()
-        .optional(),
+      breakdown: BreakdownSchema,
+      // v5 additions. Defaulted so a v4-shaped response still parses.
+      match_score: z.number().min(0).max(100).optional(),
+      headline_evidence: z.array(z.string().max(120)).max(4).default([]),
     }),
   ),
 });
+
+/** Recompute match_score from breakdown using the exact formula the prompt
+ *  hands to the model. Used as a fallback when the model omits the field
+ *  (e.g. the response was shaped by a cached older prompt). */
+function deriveMatchScore(b: z.infer<typeof BreakdownSchema>): number | undefined {
+  if (!b) return undefined;
+  const r = b.role_fit ?? 0;
+  const rec = b.reciprocal_fit ?? 0;
+  const s = b.sector_fit ?? 0;
+  const st = b.stage_fit ?? 0;
+  const l = b.location_fit ?? 0;
+  const anti = b.anti_pref ?? 0;
+  const raw = r * 3 + rec * 2 + s * 2 + st + l - anti;
+  return Math.max(0, Math.min(100, Math.round((100 * raw) / 27)));
+}
 
 export interface RankedCandidate {
   founder_id: string;
@@ -50,18 +79,39 @@ export interface RankedCandidate {
   /** Required when intro_recommendation === "hold", else "". */
   hold_reason: string;
   /** 0-3 from the rerank breakdown. 0 = this card misses the asked sector
-   * entirely and the caller should be honest about the gap. Undefined when
-   * the LLM didn't return a breakdown (v2/v3 response shape). */
+   *  entirely and the caller should be honest about the gap. */
   sector_fit?: number;
+  /** 0-100 quantitative match score. Surfaced to the user on the card. */
+  match_score?: number;
+  /** 0-3 each. The full breakdown so the dispatcher can render a "why"
+   *  block when the user asks. */
+  breakdown?: {
+    role_fit?: number | undefined;
+    reciprocal_fit?: number | undefined;
+    sector_fit?: number | undefined;
+    stage_fit?: number | undefined;
+    location_fit?: number | undefined;
+    anti_pref?: number | undefined;
+  };
+  /** Verbatim phrases from the candidate profile justifying the score. */
+  headline_evidence?: string[];
 }
 
-const TOP_N_TO_RERANK = 5;
+// Smaller candidate set (was 5) — the rerank latency is ~linear in
+// candidates × output tokens, and 4 cards still gives the agent room for
+// "next" / "skip" without recomputing. Empirically, the top-of-rank
+// distribution after retrieval is dominated by the first 3-4 anyway.
+const TOP_N_TO_RERANK = 4;
 const RETURN_TOP = 3;
-// Vercel caps serverless at 60s. LLM rerank is the single biggest time sink.
-// 5 candidates fits in ~1k output tokens → completes in ~4s on gpt-4.1-mini.
-const RERANK_TIMEOUT_MS = 40_000;
-// 5 candidates × ~180 tokens comfortably fits in 1.5k.
-const RERANK_MAX_TOKENS = 1500;
+// 25s ceiling. With gpt-4.1-mini and 4 candidates a healthy rerank lands in
+// 6-9s; the timeout is a guard against transient upstream slowness, after
+// which we fall back to retrieval order rather than block the WhatsApp turn.
+const RERANK_TIMEOUT_MS = 25_000;
+// 4 candidates × ~280 tokens (rationale + 3 bullets + breakdown + 3 evidence
+// quotes + drawback) = ~1.1k. 1300 gives slack so the JSON closes cleanly.
+// Lower than this and gpt-4.1-mini truncates mid-object → parse fails
+// silently and we lose the v5 quantitative fields.
+const RERANK_MAX_TOKENS = 1300;
 
 function normalize(text: string): string {
   return text.toLowerCase();
@@ -175,9 +225,12 @@ export async function rerank(
     sector_tags: c.sector_tags,
     stage_tags: c.stage_tags,
     seniority: c.seniority,
+    years_exp: c.years_exp,
+    times_shown: c.times_shown,
   }));
 
   try {
+    const model = rerankModel();
     const llmCall = getLLM().json<z.infer<typeof RerankOutputSchema>>({
       system: RERANK_SYSTEM,
       user: buildRerankUserPrompt({
@@ -197,6 +250,7 @@ export async function rerank(
       schemaName: "RerankOutput",
       temperature: 0.2,
       maxTokens: RERANK_MAX_TOKENS,
+      ...(model ? { model } : {}),
       parse: (raw) => RerankOutputSchema.parse(JSON.parse(raw)),
     });
     const timeout = new Promise<never>((_, reject) =>
@@ -208,6 +262,7 @@ export async function rerank(
     const filtered = parsed.ranked.filter((r) => known.has(r.founder_id));
     return filtered.slice(0, RETURN_TOP).map((r) => {
       const sectorFit = r.breakdown?.sector_fit;
+      const matchScore = r.match_score ?? deriveMatchScore(r.breakdown);
       return {
         founder_id: r.founder_id,
         score: r.score,
@@ -219,13 +274,17 @@ export async function rerank(
           .map((b) => b.slice(0, 180)),
         drawback: (r.drawback ?? "").trim().slice(0, 240),
         intro_recommendation: r.intro_recommendation ?? "warm",
-        // Enforce the schema rule: hold_reason is only meaningful when hold.
-        // If the model returned "warm" with a reason, drop it.
         hold_reason:
           r.intro_recommendation === "hold"
             ? (r.hold_reason ?? "").trim().slice(0, 260)
             : "",
         ...(typeof sectorFit === "number" ? { sector_fit: sectorFit } : {}),
+        ...(typeof matchScore === "number" ? { match_score: matchScore } : {}),
+        ...(r.breakdown ? { breakdown: r.breakdown } : {}),
+        headline_evidence: (r.headline_evidence ?? [])
+          .map((e) => e.trim())
+          .filter((e) => e.length > 0)
+          .slice(0, 3),
       };
     });
   } catch (err) {

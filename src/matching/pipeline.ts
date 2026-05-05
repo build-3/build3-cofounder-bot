@@ -9,6 +9,7 @@ export interface CandidateCard {
   name: string;
   city: string;
   headline: string;
+  summary: string;
   /** Reranker score. Carried through to support the two-card confidence
    *  gate (runner-up must be within 60% of the top). */
   score: number;
@@ -36,6 +37,22 @@ export interface CandidateCard {
   /** 0-3 from the reranker breakdown. 0 means this card misses the asked
    * sector entirely; the dispatcher prepends an honest gap preamble. */
   sector_fit?: number;
+  /** 0-100 quantitative match score. Surfaced to the user. */
+  match_score?: number;
+  /** Full 0-3 breakdown for explainability. */
+  breakdown?: {
+    role_fit?: number | undefined;
+    reciprocal_fit?: number | undefined;
+    sector_fit?: number | undefined;
+    stage_fit?: number | undefined;
+    location_fit?: number | undefined;
+    anti_pref?: number | undefined;
+  };
+  /** Verbatim phrases from the candidate profile justifying the score. */
+  headline_evidence?: string[];
+  /** How often this candidate has been shown across conversations. The
+   *  dispatcher can render "fresh face in the cohort" when low. */
+  times_shown?: number;
 }
 
 export interface RankedResult {
@@ -60,7 +77,7 @@ export async function runMatching(args: {
 
   const byId = new Map(retrieved.map((c) => [c.founder_id, c]));
   const cards: CandidateCard[] = ranked
-    .map((r: RankedCandidate) => {
+    .map((r: RankedCandidate): CandidateCard | null => {
       const c = byId.get(r.founder_id);
       if (!c) return null;
       return {
@@ -68,6 +85,7 @@ export async function runMatching(args: {
         name: c.name,
         city: c.city,
         headline: c.headline,
+        summary: c.summary,
         score: r.score,
         rationale: r.rationale,
         bullets: r.bullets,
@@ -78,7 +96,11 @@ export async function runMatching(args: {
         years_exp: c.years_exp,
         sector_tags: c.sector_tags,
         stage_tags: c.stage_tags,
+        times_shown: c.times_shown,
         ...(typeof r.sector_fit === "number" ? { sector_fit: r.sector_fit } : {}),
+        ...(typeof r.match_score === "number" ? { match_score: r.match_score } : {}),
+        ...(r.breakdown ? { breakdown: r.breakdown } : {}),
+        ...(r.headline_evidence?.length ? { headline_evidence: r.headline_evidence } : {}),
       };
     })
     .filter((x): x is CandidateCard => x !== null);
@@ -108,7 +130,18 @@ export async function recordShown(
         ON CONFLICT (conversation_id, founder_id) DO NOTHING
         RETURNING id
       `;
-      if (rows.length === 0) allInserted = false;
+      if (rows.length === 0) {
+        allInserted = false;
+        continue;
+      }
+      // Only bump the global counter when the row was actually inserted.
+      // ON CONFLICT DO NOTHING means the same conversation already saw this
+      // founder — we should NOT count that as a new exposure.
+      await tx`
+        UPDATE founders
+        SET times_shown = times_shown + 1, last_shown_at = now()
+        WHERE id = ${c.founder_id}
+      `;
     }
   });
   return allInserted;

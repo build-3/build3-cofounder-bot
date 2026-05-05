@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { loadConfig } from "../lib/config.js";
 import { logger } from "../lib/logger.js";
-import { UnauthorizedError, ValidationError } from "../lib/errors.js";
+import { UnauthorizedError } from "../lib/errors.js";
 import { createWatiClient } from "./client.js";
 import { dispatchInbound } from "./dispatcher.js";
 import { WatiInboundSchema } from "./types.js";
@@ -64,8 +64,19 @@ export const watiWebhookRoute: FastifyPluginAsync = async (app: FastifyInstance)
 
     const parsed = WatiInboundSchema.safeParse(req.body);
     if (!parsed.success) {
-      logger.warn({ issues: parsed.error.issues, body: req.body }, "invalid WATI payload");
-      throw new ValidationError("invalid WATI inbound payload");
+      // WATI dashboard subscribes to multiple event types ("Message Received",
+      // "CTA Button Clicked", "Message Status", ...). We only act on shapes
+      // that match our schema (text + interactive replies). For everything
+      // else — CTA clicks, delivery receipts, system events — we ack 200 and
+      // drop. Returning 4xx makes WATI flag the webhook "Defective" and stop
+      // sending entirely, which is far worse than ignoring an event we don't
+      // care about. (See WATI dashboard 2026-05-05 incident.)
+      logger.warn(
+        { issues: parsed.error.issues, body: req.body },
+        "WATI payload outside schema — dropping (200 ack)",
+      );
+      reply.code(200).send({ ok: true, ignored: "schema_mismatch" });
+      return;
     }
 
     try {

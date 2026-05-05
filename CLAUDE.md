@@ -67,9 +67,9 @@ See `docs/` for deeper detail:
 3. **Prompts are versioned.** All LLM prompts live under `src/llm/prompts/` with a version suffix (e.g. `refinement_v1.ts`). When you change a prompt, bump the version — don't edit in place. This lets us diff-test ranker quality.
 
    Current versions (live path):
-   - `agent_v2.ts` — agent system prompt (tightened buttons + no-match + greeting rules)
+   - `agent_v4.ts` — agent system prompt (forces `match_score` and headline_evidence in card; quantitative reasoning required when the founder pushes back)
    - `refinement_v3.ts` — user turn → `RefinementDelta` (used by `update_search_state` tool)
-   - `rerank_v4.ts` — retrieval → ranked candidates (used by `find_cofounders` tool)
+   - `rerank_v5.ts` — retrieval → ranked candidates with `match_score` (0-100), `breakdown`, `headline_evidence` (used by `find_cofounders` tool)
    - `explain_v1.ts` — 1-line rationale per card
    - `intro_v1.ts` — mutual-accept intro message
 
@@ -85,6 +85,9 @@ See `docs/` for deeper detail:
 10. **No PR gets merged without updating docs.** Principal-reviewer gate enforces `PROJECT_STATE.md` freshness.
 11. **Whitelist-only during testing.** `src/wati/dispatcher.ts` hardcodes a 2-number allowlist (`917397599542`, `918468090511`). All other inbounds are silently dropped. Remove when rolling to full cohort.
 12. **Agent owns the turn.** `src/agent/loop.ts:runAgent` is the single entry point. No intent classifier / router / templated card in the live path. Agent must call `finish_turn` exactly once per inbound.
+13. **Three model tiers, not one.** The agent loop runs on `*_MODEL_AGENT` (chat-grade); the rerank + intent extraction run on `*_MODEL_RERANK` (small, fast JSON-only model). Don't accidentally route a structured JSON call through the chat model — it doubles latency for no quality gain. See `src/matching/reranker.ts:rerankModel()` and `src/matching/intent.ts:intentModel()`.
+14. **`founders.times_shown` is a soft signal.** Incremented in `recordShown` only when the row is actually inserted (ON CONFLICT DO NOTHING means same conv saw them already — don't double count). The retriever uses it as a tiny ORDER BY dampener (`+ LEAST(times_shown,50) * 0.005` on cosine distance). It is NOT a hard cap; a clear winner still wins.
+15. **Trivial refinements skip the intent LLM.** `src/matching/retriever.ts:isTrivialRefinement` matches "next" / "skip" / "more" / numeric replies and uses the existing search_state instead of round-tripping to the LLM. Saves 800-1200ms per refinement turn. The fast-path is the most common kind of turn after discovery.
 
 ## WATI wiring
 

@@ -38,11 +38,18 @@ export const founders = pgTable(
     yearsExp: integer("years_exp").notNull(),
     rawProfile: jsonb("raw_profile").notNull().default({}),
     optedIn: boolean("opted_in").notNull().default(true),
+    /** How often this founder has been surfaced as a candidate, globally
+     *  across conversations. Used by the retriever to soft-deprioritize
+     *  over-shown profiles so the AI rotates through the cohort. Hard cap
+     *  is intentionally not enforced — a perfect match still wins. */
+    timesShown: integer("times_shown").notNull().default(0),
+    lastShownAt: timestamp("last_shown_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
     phoneUnique: uniqueIndex("founders_phone_unique").on(t.phone),
     cityIdx: index("founders_city_idx").on(t.city),
+    timesShownIdx: index("founders_times_shown_idx").on(t.timesShown),
   }),
 );
 
